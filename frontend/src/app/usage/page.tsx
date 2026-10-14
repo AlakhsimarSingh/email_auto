@@ -20,7 +20,7 @@ type Health = {
   sample_size: number;
   period_days: number;
   metrics: { sent: number; replies: number; bounces: number; complaints: number; suppressions: number; open_replies: number; bounce_rate: number | null; complaint_rate: number | null };
-  warmup: { ramp: number[]; day: number; cap: number; sent_today: number; ramp_days: number };
+  warmup: { cap: number; stage: number; stages: number[]; daysPerStage: number; firstSentAt: string | null; sent_today: number };
   note: string | null;
 };
 
@@ -118,7 +118,7 @@ export default function UsagePage() {
               <section className="admin-panel"><span>Inbox health · 30 days</span><strong className={`health-status ${health.status}`}>{health.status.replace('_', ' ')}</strong><small>{health.sample_size} sends in sample · {health.metrics.open_replies} open replies</small></section>
               <section className="admin-panel"><span>Queue / sent today</span><strong>{usage.queue.pending} / {usage.queue.sent_today}</strong><small>pending / sent today</small></section>
               <section className="admin-panel"><span>Service uptime</span><strong>{Math.floor(usage.process_uptime_seconds / 3600)}h {Math.floor(usage.process_uptime_seconds % 3600 / 60)}m</strong><small>Last tick: {usage.last_tick_at ? new Date(usage.last_tick_at).toLocaleString() : 'not recorded'}</small></section>
-              <section className="admin-panel"><span>Warm-up cap</span><strong>{health.warmup.sent_today} / {health.warmup.cap}</strong><small>Day {health.warmup.day} of {health.warmup.ramp_days} · {health.warmup.ramp.join(' → ')}</small></section>
+              <section className="admin-panel"><span>Warm-up cap</span><strong>{health.warmup.sent_today} / {health.warmup.cap}</strong><small>{health.warmup.firstSentAt ? `Stage ${health.warmup.stage} of ${health.warmup.stages.length} · ${health.warmup.daysPerStage} days per stage` : 'Starts with the first real send'} · {health.warmup.stages.join(' → ')}</small></section>
             </div>
 
             {(health.note || dbWarning) && <div className="analytics-caveat">{health.note ?? `Database size is ${dbPercent.toFixed(0)}% of the configured limit. Review Supabase usage and retention.`}</div>}
