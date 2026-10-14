@@ -185,10 +185,6 @@ export default function DevicesPage() {
 
   return (
     <main className="devices-page">
-      <header className="admin-header">
-        <a className="brand" href="/"><span className="brand-mark">E</span><span>Email<span className="brand-light">Auto</span></span></a>
-        <a className="admin-back" href="/">← Back to workspace</a>
-      </header>
       <div className="devices-content">
         <div className="section-kicker">PERSONAL NOTIFICATIONS</div>
         <h1>Devices</h1>

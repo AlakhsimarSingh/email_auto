@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
-import '../brain/brain.css';
 
 type Analytics = {
   period_days: number;
@@ -144,10 +143,6 @@ export default function AnalyticsPage() {
 
   return (
     <main className="admin-page">
-      <header className="admin-header">
-        <a className="brand" href="/"><span className="brand-mark">E</span><span>Email<span className="brand-light">Auto</span></span></a>
-        <a className="admin-back" href="/">← Back to workspace</a>
-      </header>
       <div className="admin-content">
         <div className="admin-heading">
           <div>

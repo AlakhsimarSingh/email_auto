@@ -99,10 +99,6 @@ export default function UsagePage() {
 
   return (
     <main className="admin-page">
-      <header className="admin-header">
-        <a className="brand" href="/"><span className="brand-mark">E</span><span>Email<span className="brand-light">Auto</span></span></a>
-        <a className="admin-back" href="/">← Back to workspace</a>
-      </header>
       <div className="admin-content">
         <div className="admin-heading">
           <div><div className="section-kicker">OPERATIONS</div><h1>Usage & inbox health</h1><p>Measured workload, database capacity, sending health, and manually observed mailbox placement.</p></div>

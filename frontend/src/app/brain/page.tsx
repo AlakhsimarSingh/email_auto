@@ -3,7 +3,6 @@
 import Script from 'next/script';
 import { useCallback, useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
-import './brain.css';
 
 type Settings = { frozen: boolean; learningRate: number; explorationShare: number; attributionDays: number; autonomy: 'L0' | 'L1' };
 type Overview = {
@@ -172,10 +171,6 @@ export default function BrainPage() {
   return (
     <main className="admin-page">
       <Script src="https://accounts.google.com/gsi/client" strategy="afterInteractive" onReady={initGoogle} onError={() => setError('Google verification could not load.')} />
-      <header className="admin-header">
-        <a className="brand" href="/"><span className="brand-mark">E</span><span>Email<span className="brand-light">Auto</span></span></a>
-        <a className="admin-back" href="/">← Back to workspace</a>
-      </header>
       <div className="admin-content">
         <div className="admin-heading">
           <div><div className="section-kicker">LEARNING AGENT</div><h1>Brain</h1><p>What the agent has learned, what it is allowed to change, and how to steer or reset it.</p></div>

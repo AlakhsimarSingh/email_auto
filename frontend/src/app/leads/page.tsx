@@ -178,19 +178,7 @@ export default function LeadsPage() {
 
   return (
     <div className="dashboard-shell">
-      <aside className="sidebar">
-        <a className="brand" href="/"><span className="brand-mark">E</span><span>Email<span className="brand-light">Auto</span></span></a>
-        <div className="nav-label">WORKSPACE</div>
-        <nav className="side-nav" aria-label="Main navigation">
-          <a className="nav-item" href="/">Overview</a>
-          <a className="nav-item active" href="/leads">Leads</a>
-          <a className="nav-item" href="/markets">Markets</a>
-          <a className="nav-item" href="/admin">Admin & security</a>
-        </nav>
-        <div className="sidebar-bottom"><div className="sidebar-status">Research queue</div><p>Website and no-website leads stay on separate tracks.</p></div>
-      </aside>
       <main className="main-content">
-        <header className="topbar"><div className="breadcrumb"><a href="/">Workspace</a><span className="crumb-divider">/</span><strong>Leads</strong></div></header>
         <div className="dashboard-content">
           <section className="welcome-row">
             <div><div className="eyebrow">LEAD RESEARCH</div><h1>Prospect pipeline</h1><p className="page-subtitle">Verified signals, contact sources, and no-website call queue.</p></div>

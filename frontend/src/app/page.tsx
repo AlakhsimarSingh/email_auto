@@ -46,7 +46,6 @@ type Stats = {
   overdue_replies: number;
 };
 
-type Account = { email: string; role: string };
 
 function Icon({ name }: { name: 'grid' | 'mail' | 'clock' | 'send' | 'refresh' | 'check' | 'arrow' | 'spark' }) {
   const paths: Record<typeof name, ReactNode> = {
@@ -70,32 +69,29 @@ export default function Review() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [busyId, setBusyId] = useState<number | null>(null);
-  const [account, setAccount] = useState<Account | null>(null);
   const [rated, setRated] = useState<Record<number, 'up' | 'down'>>({});
 
   const load = useCallback(async () => {
     setLoading(true);
     setError('');
     try {
-      const [draftResponse, statsResponse, accountResponse, heldResponse] = await Promise.all([
+      const [draftResponse, statsResponse, heldResponse] = await Promise.all([
         fetch('/api/proxy/emails/review'),
         fetch('/api/proxy/stats'),
-        fetch('/api/proxy/auth/me'),
         fetch('/api/proxy/emails/held'),
       ]);
-      if ([draftResponse, statsResponse, accountResponse, heldResponse].some((response) => response.status === 401)) {
+      if ([draftResponse, statsResponse, heldResponse].some((response) => response.status === 401)) {
         location.href = '/login';
         return;
       }
-      if ([draftResponse, statsResponse, accountResponse, heldResponse].some((response) => !response.ok)) {
+      if ([draftResponse, statsResponse, heldResponse].some((response) => !response.ok)) {
         throw new Error('Could not load dashboard data. Check the backend and try again.');
       }
-      const [draftData, statsData, accountData, heldData] = await Promise.all([
-        draftResponse.json(), statsResponse.json(), accountResponse.json(), heldResponse.json(),
+      const [draftData, statsData, heldData] = await Promise.all([
+        draftResponse.json(), statsResponse.json(), heldResponse.json(),
       ]);
       setItems(draftData);
       setStats(statsData);
-      setAccount(accountData);
       setHeld(heldData);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : 'Could not load dashboard data.');
@@ -104,13 +100,6 @@ export default function Review() {
     }
   }, []);
 
-  const logout = async () => {
-    try {
-      await fetch('/api/logout', { method: 'POST' });
-    } finally {
-      location.href = '/login';
-    }
-  };
 
   useEffect(() => { void load(); }, [load]);
 
@@ -162,51 +151,8 @@ export default function Review() {
 
   return (
     <div className="dashboard-shell">
-      <aside className="sidebar">
-        <a className="brand" href="/" aria-label="Email Auto dashboard">
-          <span className="brand-mark">E</span>
-          <span>Email<span className="brand-light">Auto</span></span>
-        </a>
-
-        <div className="nav-label">WORKSPACE</div>
-        <nav className="side-nav" aria-label="Main navigation">
-          <a className="nav-item active" href="/">
-            <Icon name="grid" /><span>Overview</span>
-          </a>
-          <a className="nav-item" href="#review-queue">
-            <Icon name="mail" /><span>Review drafts</span>
-            {stats && <span className="nav-count">{stats.to_review}</span>}
-          </a>
-          <a className="nav-item" href="/inbox">
-            <Icon name="mail" /><span>Replies</span>
-            {stats && <span className="nav-count">{stats.pending_replies}</span>}
-          </a>
-          <a className="nav-item" href="/leads"><Icon name="grid" /><span>Leads</span></a>
-          <a className="nav-item" href="/pipeline"><Icon name="grid" /><span>Deals</span></a>
-          <a className="nav-item" href="/analytics"><Icon name="grid" /><span>Analytics</span></a>
-          <a className="nav-item" href="/markets"><Icon name="grid" /><span>Markets</span></a>
-          <a className="nav-item" href="/notifications"><Icon name="grid" /><span>Notifications</span></a>
-          <a className="nav-item" href="/devices"><Icon name="grid" /><span>Devices</span></a>
-          <a className="nav-item" href="/usage"><Icon name="grid" /><span>Usage & health</span></a>
-          {account?.role === 'owner' && <a className="nav-item" href="/brain"><Icon name="spark" /><span>Brain</span></a>}
-          {account?.role === 'owner' && <a className="nav-item" href="/settings"><Icon name="grid" /><span>Settings</span></a>}
-        </nav>
-
-        <div className="sidebar-bottom">
-          <div className="sidebar-status"><span className="status-dot" /> Your workspace</div>
-          <p>Review every draft before it enters the send queue.</p>
-        </div>
-      </aside>
 
       <main className="main-content">
-        <header className="topbar">
-          <div className="breadcrumb"><span>Workspace</span><span className="crumb-divider">/</span><strong>Overview</strong></div>
-          <div className="topbar-right">
-            <span className="secure-label"><span className="secure-dot" /> Private workspace</span>
-            <span className="account-email">{account?.email}</span>
-            <button className="logout-button" onClick={() => void logout()}>Sign out</button>
-          </div>
-        </header>
 
         <div className="dashboard-content">
           <section className="welcome-row">

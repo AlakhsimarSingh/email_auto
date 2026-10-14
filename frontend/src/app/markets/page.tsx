@@ -113,19 +113,7 @@ export default function MarketsPage() {
 
   return (
     <div className="dashboard-shell">
-      <aside className="sidebar">
-        <a className="brand" href="/"><span className="brand-mark">E</span><span>Email<span className="brand-light">Auto</span></span></a>
-        <div className="nav-label">WORKSPACE</div>
-        <nav className="side-nav" aria-label="Main navigation">
-          <a className="nav-item" href="/">Overview</a>
-          <a className="nav-item" href="/leads">Leads</a>
-          <a className="nav-item active" href="/markets">Markets</a>
-          <a className="nav-item" href="/admin">Admin & security</a>
-        </nav>
-        <div className="sidebar-bottom"><div className="sidebar-status">Market allowlist</div><p>Lead discovery and sending are restricted to enabled countries.</p></div>
-      </aside>
       <main className="main-content">
-        <header className="topbar"><div className="breadcrumb"><a href="/">Workspace</a><span className="crumb-divider">/</span><strong>Markets</strong></div><span className="account-email">{account?.email}</span></header>
         <div className="dashboard-content">
           <section className="welcome-row">
             <div><div className="eyebrow">COUNTRY SCORECARD</div><h1>Choose where to focus</h1><p className="page-subtitle">Prior scores blend with your sourcing and send evidence; the system never enables a market automatically.</p></div>

@@ -173,10 +173,6 @@ export default function NotificationsPage() {
 
   return (
     <main className="admin-page">
-      <header className="admin-header">
-        <a className="brand" href="/"><span className="brand-mark">E</span><span>Email<span className="brand-light">Auto</span></span></a>
-        <a className="admin-back" href="/">← Back to workspace</a>
-      </header>
       <div className="admin-content">
         <div className="admin-heading">
           <div><div className="section-kicker">ALERTS & DELIVERY</div><h1>Notifications</h1><p>Connect private channels, choose a primary digest destination, and acknowledge alerts across signed-in devices.</p></div>

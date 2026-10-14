@@ -112,10 +112,6 @@ export default function PipelinePage() {
 
   return (
     <main className="admin-page">
-      <header className="admin-header">
-        <a className="brand" href="/"><span className="brand-mark">E</span><span>Email<span className="brand-light">Auto</span></span></a>
-        <a className="admin-back" href="/">← Back to workspace</a>
-      </header>
       <div className="admin-content">
         <div className="admin-heading">
           <div><div className="section-kicker">SALES PIPELINE</div><h1>Deals</h1><p>Every human reply starts in Replied. Track the next step and record a value when known.</p></div>

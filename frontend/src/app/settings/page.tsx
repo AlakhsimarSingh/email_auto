@@ -219,10 +219,6 @@ export default function SettingsPage() {
   return (
     <main className="admin-page">
       <Script src="https://accounts.google.com/gsi/client" onLoad={initGoogle} onError={() => setError('Google sign-in could not load.')} />
-      <header className="admin-header">
-        <a className="brand" href="/"><span className="brand-mark">E</span><span>Email<span className="brand-light">Auto</span></span></a>
-        <a className="admin-back" href="/">← Back to workspace</a>
-      </header>
       <div className="admin-content">
         <div className="admin-heading">
           <div><div className="section-kicker">WORKSPACE SETTINGS</div><h1>Settings</h1><p>Manage email access, portfolio links, and sending safeguards.</p></div>

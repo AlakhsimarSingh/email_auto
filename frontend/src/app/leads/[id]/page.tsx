@@ -52,26 +52,15 @@ function LeadDetail({ params }: { params: Promise<{ id: string }> }) {
 
   return (
     <div className="dashboard-shell">
-      <aside className="sidebar">
-        <a className="brand" href="/"><span className="brand-mark">E</span><span>Email<span className="brand-light">Auto</span></span></a>
-        <div className="nav-label">WORKSPACE</div>
-        <nav className="side-nav" aria-label="Main navigation">
-          <a className="nav-item" href="/">Overview</a>
-          <a className="nav-item active" href="/leads">Leads</a>
-          <a className="nav-item" href="/markets">Markets</a>
-          <a className="nav-item" href="/admin">Admin & security</a>
-        </nav>
-      </aside>
       <main className="main-content">
-        <header className="topbar"><div className="breadcrumb"><a href="/leads">Leads</a><span className="crumb-divider">/</span><strong>Lead details</strong></div></header>
         <div className="dashboard-content">
+          <a className="back-link" href="/leads">‹ Leads</a>
           {error && <div className="error-banner" role="alert">{error}</div>}
           {!lead && !error && <div className="panel empty-state"><span className="loading-spinner" /> Loading lead details…</div>}
           {lead && (
             <>
               <section className="welcome-row">
                 <div><div className="eyebrow">{lead.track === 'no_site' ? 'NO-WEBSITE TRACK' : 'WEBSITE TRACK'}</div><h1>{lead.name || 'Unnamed business'}</h1><p className="page-subtitle">{[lead.niche, lead.city, lead.country].filter(Boolean).join(' · ')}</p></div>
-                <a className="refresh-button" href="/leads">← Back to leads</a>
               </section>
               {lead.track === 'no_site' && lead.callScript && <div className="call-script"><strong>Manual call script</strong><p>{lead.callScript}</p><span>No automated calling or messaging is performed.</span></div>}
               <div className="lead-detail-grid">
