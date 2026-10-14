@@ -1,0 +1,41 @@
+name: Nightly database backup
+
+# pg_dump of the Supabase database, encrypted with a passphrase and kept as a 14-day artifact (README §17).
+on:
+  schedule:
+    - cron: '30 2 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Dump and encrypt
+        env:
+          # Use the direct or session-pooler URL; pg_dump does not work through the transaction pooler.
+          DIRECT_URL: ${{ secrets.BACKUP_DATABASE_URL }}
+          BACKUP_PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
+        run: |
+          if [ -z "$DIRECT_URL" ] || [ -z "$BACKUP_PASSPHRASE" ]; then
+            echo "::error::Set the BACKUP_DATABASE_URL and BACKUP_PASSPHRASE repository secrets."
+            exit 1
+          fi
+          stamp=$(date -u +%Y%m%dT%H%M%SZ)
+          # The client must be at least the server's major version; Supabase currently runs Postgres 15-17.
+          docker run --rm -e DIRECT_URL postgres:17 \
+            sh -c 'pg_dump "$DIRECT_URL" --format=custom --no-owner --no-privileges --schema=public' > "db-$stamp.dump"
+          test -s "db-$stamp.dump"
+          gpg --batch --yes --pinentry-mode loopback --passphrase "$BACKUP_PASSPHRASE" \
+            --symmetric --cipher-algo AES256 --output "db-$stamp.dump.gpg" "db-$stamp.dump"
+          rm "db-$stamp.dump"
+          echo "BACKUP_FILE=db-$stamp.dump.gpg" >> "$GITHUB_ENV"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.BACKUP_FILE }}
+          path: ${{ env.BACKUP_FILE }}
+          retention-days: 14
+          if-no-files-found: error

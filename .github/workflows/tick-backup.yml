@@ -1,0 +1,27 @@
+name: Tick backup pinger
+
+# Slow backup for the primary cron-job.org pinger (README §3). Overlapping ticks are safe: the backend holds a lease.
+on:
+  schedule:
+    - cron: '*/30 * * * *'
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  tick:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: POST /internal/tick
+        env:
+          BACKEND_PUBLIC_URL: ${{ secrets.BACKEND_PUBLIC_URL }}
+          TICK_SECRET: ${{ secrets.TICK_SECRET }}
+        run: |
+          if [ -z "$BACKEND_PUBLIC_URL" ] || [ -z "$TICK_SECRET" ]; then
+            echo "::warning::Set the BACKEND_PUBLIC_URL and TICK_SECRET repository secrets to enable the backup pinger."
+            exit 0
+          fi
+          # Render free instances may need ~1 minute to wake up.
+          curl --fail-with-body --silent --show-error --retry 3 --retry-delay 20 --retry-all-errors --max-time 90 \
+            -X POST -H "x-tick-key: $TICK_SECRET" "${BACKEND_PUBLIC_URL%/}/internal/tick"

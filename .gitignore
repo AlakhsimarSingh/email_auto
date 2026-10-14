@@ -1,0 +1,36 @@
+# Dependencies
+node_modules
+
+# Build output
+dist
+.next
+out
+*.tsbuildinfo
+
+# Secrets: keep only the documented examples
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Database backups (db-backup.yml artifacts if downloaded locally)
+*.dump
+*.dump.gpg
+
+# Deploy tooling
+.vercel
+.netlify
+
+# Logs and test output
+*.log
+npm-debug.log*
+pnpm-debug.log*
+coverage
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea
+.vscode/*
+!.vscode/extensions.json

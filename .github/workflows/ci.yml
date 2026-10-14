@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    env:
+      # Placeholders so Prisma can load the schema; no job here connects to a database.
+      DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
+      DIRECT_URL: postgresql://ci:ci@localhost:5432/ci
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Backend typecheck, build, tests
+        working-directory: backend
+        run: |
+          pnpm build
+          pnpm test
+      - name: Frontend typecheck and build
+        working-directory: frontend
+        env:
+          BACKEND_URL: http://localhost:8080
+          NEXT_PUBLIC_GOOGLE_CLIENT_ID: ci.apps.googleusercontent.com
+        run: |
+          pnpm exec tsc --noEmit
+          pnpm build

@@ -1,0 +1,15 @@
+CREATE TABLE IF NOT EXISTS admin_users(id serial primary key, email text unique not null, role text not null default 'admin' check (role in ('owner','admin')));
+CREATE TABLE IF NOT EXISTS campaigns(id serial primary key, name text, niche text, city text, country text, osm_filter text not null, active bool default true);
+CREATE TABLE IF NOT EXISTS businesses(id serial primary key, osm_id text unique, name text, niche text, city text, country text, website_url text, status text default 'new', findings jsonb, created_at timestamptz default now());
+CREATE TABLE IF NOT EXISTS contacts(id serial primary key, business_id int references businesses on delete cascade, email text, source_url text, unique(business_id, email));
+CREATE TABLE IF NOT EXISTS emails(id serial primary key, business_id int references businesses on delete cascade, contact_id int references contacts, subject text, body text, orig_body text, status text default 'drafted', scheduled_for timestamptz, sent_at timestamptz, gmail_message_id text, error text, created_at timestamptz default now());
+CREATE TABLE IF NOT EXISTS suppressions(email text primary key, reason text, created_at timestamptz default now());
+CREATE TABLE IF NOT EXISTS lease(id int primary key, until timestamptz not null);
+INSERT INTO lease VALUES (1, 'epoch') ON CONFLICT DO NOTHING;
+ALTER TABLE admin_users ENABLE ROW LEVEL SECURITY;
+ALTER TABLE campaigns ENABLE ROW LEVEL SECURITY;
+ALTER TABLE businesses ENABLE ROW LEVEL SECURITY;
+ALTER TABLE contacts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE emails ENABLE ROW LEVEL SECURITY;
+ALTER TABLE suppressions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE lease ENABLE ROW LEVEL SECURITY;
