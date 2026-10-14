@@ -70,7 +70,12 @@ export default function AdminPage() {
   useEffect(() => {
     const result = new URLSearchParams(location.search).get('gmail');
     if (result === 'connected') setNotice('The owner Gmail mailbox is connected and verified.');
-    else if (result) setError(result === 'denied' ? 'Gmail authorization was cancelled.' : 'Gmail could not be connected. Re-verify the owner account and try again.');
+    else if (result) setError(({
+      denied: 'Gmail authorization was cancelled.',
+      scope: 'Gmail access was not granted. Connect again and tick the "Read, compose, and send emails" checkbox (or Select all) on the Google screen.',
+      'api-disabled': 'The Gmail API is disabled in your Google Cloud project. Enable it under APIs & Services → Library → Gmail API, wait a minute, then connect again.',
+      'wrong-account': 'That Google account is not the owner mailbox. Connect again and choose the OWNER_EMAIL account.',
+    } as Record<string, string>)[result] ?? 'Gmail could not be connected. Re-verify the owner account and try again.');
     if (result) history.replaceState(null, '', '/admin');
   }, []);
 

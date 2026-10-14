@@ -84,7 +84,11 @@ export async function verifyGmailOwner(accessToken: string) {
     headers: { authorization: `Bearer ${accessToken}` },
     signal: AbortSignal.timeout(15000),
   });
-  if (!response.ok) throw new Error(`Gmail mailbox identity could not be verified (HTTP ${response.status})`);
+  if (!response.ok) {
+    const detail = await response.json().catch(() => null) as { error?: { message?: string; details?: Array<{ reason?: string }> } } | null;
+    const reason = detail?.error?.details?.find((item) => item.reason)?.reason ?? detail?.error?.message?.slice(0, 200);
+    throw new Error(`Gmail mailbox identity could not be verified (HTTP ${response.status}${reason ? `: ${reason}` : ''})`);
+  }
   const profile = await response.json() as { emailAddress?: string };
   const email = profile.emailAddress?.trim().toLowerCase();
   if (!email || email !== env.OWNER_EMAIL.toLowerCase()) {

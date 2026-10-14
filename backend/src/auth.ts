@@ -600,12 +600,25 @@ export async function registerAuthRoutes(app: FastifyInstance) {
       }),
       signal: AbortSignal.timeout(15000),
     });
-    const tokenData = await tokenResponse.json() as { access_token?: string; refresh_token?: string; error?: string };
+    const tokenData = await tokenResponse.json() as { access_token?: string; refresh_token?: string; scope?: string; error?: string };
     if (!tokenResponse.ok || !tokenData.access_token || !tokenData.refresh_token) {
       request.log.error({ event: 'gmail_oauth_exchange_failed', status: tokenResponse.status, error: tokenData.error });
       return reply.code(502).send({ error: 'gmail_oauth_exchange_failed' });
     }
-    await verifyGmailOwner(tokenData.access_token);
+    // Google's granular consent lets the user untick the Gmail permission and still returns tokens.
+    if (!tokenData.scope?.split(' ').includes('https://www.googleapis.com/auth/gmail.modify')) {
+      request.log.warn({ event: 'gmail_scope_not_granted', scope: tokenData.scope });
+      return reply.code(400).send({ error: 'gmail_scope_not_granted' });
+    }
+    try {
+      await verifyGmailOwner(tokenData.access_token);
+    } catch (error) {
+      request.log.error({ err: error, event: 'gmail_owner_verification_failed' });
+      const message = error instanceof Error ? error.message : '';
+      const code = /SERVICE_DISABLED|accessNotConfigured|has not been used|is disabled/i.test(message) ? 'gmail_api_disabled'
+        : message.includes('OWNER_EMAIL') ? 'gmail_wrong_account' : 'gmail_verification_failed';
+      return reply.code(502).send({ error: code });
+    }
     await storeGmailRefreshToken(tokenData.refresh_token);
     await prisma.auditLog.create({
       data: { actorEmail: request.auth!.email, action: 'gmail.connect', target: env.OWNER_EMAIL },

@@ -26,7 +26,9 @@ export async function GET(request: Request) {
       cache: 'no-store',
     });
     if (!response.ok) {
-      callbackUrl.searchParams.set('gmail', 'error');
+      const failure = await response.json().catch(() => null) as { error?: string } | null;
+      const known: Record<string, string> = { gmail_scope_not_granted: 'scope', gmail_api_disabled: 'api-disabled', gmail_wrong_account: 'wrong-account' };
+      callbackUrl.searchParams.set('gmail', known[failure?.error ?? ''] ?? 'error');
       return NextResponse.redirect(callbackUrl);
     }
     callbackUrl.searchParams.set('gmail', 'connected');
