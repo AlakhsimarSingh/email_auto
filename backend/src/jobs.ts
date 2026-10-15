@@ -29,9 +29,10 @@ const TOKEN_BUDGET = Number.isSafeInteger(configuredTokenBudget) && configuredTo
 const RECONTACT_DAYS = Number.isSafeInteger(configuredRecontactDays) && configuredRecontactDays > 0 ? configuredRecontactDays : 90;
 const HOLD_MINUTES = Number.isSafeInteger(configuredHoldMinutes) && configuredHoldMinutes >= 0 ? configuredHoldMinutes : 30;
 const EMAIL = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi;
+// overpass-api.de is the reliable public instance; private.coffee is a slower fallback (kumi.systems kept timing out).
 const OVERPASS_ENDPOINTS = [
   'https://overpass-api.de/api/interpreter',
-  'https://overpass.kumi.systems/api/interpreter',
+  'https://overpass.private.coffee/api/interpreter',
 ];
 const LABEL: Record<string, string> = {
   no_https: 'the site loads over plain HTTP, so browsers show a "Not secure" warning',
@@ -52,7 +53,7 @@ export async function runTick() {
   const now = new Date();
   const got = await prisma.lease.updateMany({
     where: { id: 1, until: { lt: now } },
-    data: { until: new Date(now.getTime() + 4 * 60 * 1000) },
+    data: { until: new Date(now.getTime() + 10 * 60 * 1000) },
   });
   if (!got.count) return;
   tickStarted();
@@ -450,26 +451,11 @@ async function discover() {
           ? `area(${Number(city.osmId) + 2_400_000_000})->.a;`
           : '';
       const spatialFilter = area ? '(area.a)' : `(around:15000,${city.latitude},${city.longitude})`;
-      const siteQuery = `[out:json][timeout:25];${area}(
-        nwr["${key}"="${value}"]["name"]["website"]${spatialFilter};
-        nwr["${key}"="${value}"]["name"]["contact:website"]${spatialFilter};
-        nwr["${key}"="${value}"]["name"]["url"]${spatialFilter};
-      );out tags center 80;`;
-      const noSiteQuery = `[out:json][timeout:25];${area}(
-        nwr["${key}"="${value}"]["name"]["phone"]["website"!~"."]["contact:website"!~"."]["url"!~"."]${spatialFilter};
-        nwr["${key}"="${value}"]["name"]["contact:phone"]["website"!~"."]["contact:website"!~"."]["url"!~"."]${spatialFilter};
-        nwr["${key}"="${value}"]["name"]["opening_hours"]["website"!~"."]["contact:website"!~"."]["url"!~"."]${spatialFilter};
-      );out tags center 80;`;
-      activity('discover', `Searching OpenStreetMap for ${c.niche} businesses with websites in ${c.city}`);
-      const siteResult = await queryOverpass(siteQuery);
-      activity('discover', `Searching OpenStreetMap for ${c.niche} businesses without websites in ${c.city}`);
-      const noSiteResult = await queryOverpass(noSiteQuery);
-      activity('discover', `OpenStreetMap returned ${siteResult.elements.length + noSiteResult.elements.length} listings; filtering out chains and ineligible ones`);
-      const result = {
-        endpoints: [siteResult.endpoint, noSiteResult.endpoint],
-        elements: [...siteResult.elements, ...noSiteResult.elements]
-          .filter((element, index, all) => all.findIndex((other) => other.type === element.type && other.id === element.id) === index),
-      };
+      const listingQuery = `[out:json][timeout:90];${area}nwr["${key}"="${value}"]["name"]${spatialFilter};out tags center 300;`;
+      activity('discover', `Searching OpenStreetMap for ${c.niche} businesses in ${c.city} (this can take up to a minute)`);
+      const listingResult = await queryOverpass(listingQuery);
+      activity('discover', `OpenStreetMap returned ${listingResult.elements.length} listings; filtering out chains and ineligible ones`);
+      const result = { endpoints: [listingResult.endpoint], elements: listingResult.elements };
       const localNameCounts = new Map<string, number>();
       for (const element of result.elements) {
         const normalizedName = element.tags?.name?.trim().toLowerCase();
@@ -928,7 +914,8 @@ async function queryOverpass(query: string) {
           'content-type': 'application/x-www-form-urlencoded;charset=UTF-8',
           'user-agent': 'EmailAutomator/1.0 (Overpass lead discovery)',
         },
-        signal: AbortSignal.timeout(35000),
+        // Matches the 90 s server-side [timeout] plus transfer time.
+        signal: AbortSignal.timeout(100000),
       });
       const body = await response.text();
       if (!response.ok) {
@@ -982,7 +969,10 @@ async function queryOverpass(query: string) {
         }),
       };
     } catch (error) {
-      failures.push(`${new URL(endpoint).host}: ${errorMessage(error)}`);
+      // undici reports network failures as a bare "fetch failed"; the cause carries the real reason (ECONNRESET, ENETUNREACH, ...).
+      const cause = error instanceof Error && error.cause instanceof Error ? error.cause : null;
+      const detail = cause ? ` (${(cause as NodeJS.ErrnoException).code ?? cause.message})` : '';
+      failures.push(`${new URL(endpoint).host}: ${errorMessage(error)}${detail}`);
     }
   }
   throw new Error(`All ${OVERPASS_ENDPOINTS.length} Overpass endpoints failed. ${failures.join(' | ')}`);
