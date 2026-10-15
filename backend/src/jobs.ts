@@ -17,6 +17,7 @@ import { getEffectiveDailyCap } from './warmup.js';
 import { createPlansForEligibleMarkets } from './send-plans.js';
 import { lookupCompaniesHouse } from './companies-house.js';
 import { recordPageSpeedCall } from './usage-meter.js';
+import { activity, runStage, tickFinished, tickStarted } from './activity.js';
 import { chooseAngle, chooseCandidates, chooseSubjectStyle, getDraftingMemory, runBrainCycle } from './brain.js';
 import { containsBannedPhrase, STYLE_HINTS, type SubjectStyle } from './brain-math.js';
 
@@ -54,31 +55,34 @@ export async function runTick() {
     data: { until: new Date(now.getTime() + 4 * 60 * 1000) },
   });
   if (!got.count) return;
+  tickStarted();
   try {
     await prisma.business.updateMany({
       where: { screenshotExpiresAt: { lte: now } },
       data: { screenshot: null, screenshotExpiresAt: null },
     });
-    await discover().catch((e) => console.error(JSON.stringify({
-      level: 'error',
-      event: 'discovery_failed',
-      message: errorMessage(e),
-    })));
-    await auditAndDraft().catch((e) => console.error('draft', e));
-    await createPlansForEligibleMarkets().catch((error) => console.error(JSON.stringify({
-      level: 'error',
-      event: 'automatic_send_plan_failed',
-      message: errorMessage(error),
-    })));
-    await pollReplies().catch((e) => console.error(JSON.stringify({ level: 'error', event: 'gmail_reply_poll_failed', message: errorMessage(e) })));
-    await scheduleFollowUps().catch((e) => console.error(JSON.stringify({ level: 'error', event: 'follow_up_schedule_failed', message: errorMessage(e) })));
-    await runBrainCycle().catch((e) => console.error(JSON.stringify({ level: 'error', event: 'brain_cycle_failed', message: errorMessage(e) })));
-    await sendDue().catch((e) => console.error('send', e));
-    await runNotificationMaintenance().catch((e) => console.error(JSON.stringify({
-      level: 'error',
-      event: 'notification_maintenance_failed',
-      message: errorMessage(e),
-    })));
+    await runStage('discover', 'Looking for new businesses to add to the lead pool', discover);
+    await runStage('audit', 'Researching businesses: website checks, contact discovery and scoring', auditAndDraft);
+    await runStage('plan', 'Checking whether a new Send Plan should be announced', createPlansForEligibleMarkets);
+    await runStage('replies', 'Checking Gmail for new replies', async () => {
+      await pollReplies();
+      const fresh = await prisma.replyRecord.groupBy({ by: ['classification'], where: { createdAt: { gte: now } }, _count: { _all: true } });
+      const total = fresh.reduce((sum, row) => sum + row._count._all, 0);
+      activity('replies', total
+        ? `Processed ${total} new ${total === 1 ? 'message' : 'messages'}: ${fresh.map((row) => `${row._count._all} ${(row.classification ?? 'other').replaceAll('_', ' ')}`).join(', ')}`
+        : 'No new replies in Gmail', total ? 'success' : 'info');
+    });
+    await runStage('followups', 'Scheduling follow-ups for silent threads', async () => {
+      await scheduleFollowUps();
+      const created = await prisma.email.count({ where: { sequenceStep: { gt: 0 }, createdAt: { gte: now } } });
+      activity('followups', created ? `Drafted ${created} follow-up ${created === 1 ? 'email' : 'emails'} for your review` : 'No follow-ups due', created ? 'success' : 'info');
+    });
+    await runStage('learn', 'Updating what the agent has learned from results', async () => {
+      await runBrainCycle();
+      activity('learn', 'Learning model is up to date');
+    });
+    await runStage('send', DRY ? 'Checking the send queue (dry run: nothing is really sent)' : 'Checking the send queue', sendDue);
+    await runStage('notify', 'Delivering notifications, retries and digests', runNotificationMaintenance);
   } finally {
     await prisma.$transaction([
       prisma.appSetting.upsert({
@@ -88,6 +92,7 @@ export async function runTick() {
       }),
       prisma.lease.update({ where: { id: 1 }, data: { until: new Date(0) } }),
     ]);
+    await tickFinished();
   }
 }
 
@@ -406,9 +411,15 @@ function isDisposableEmail(email: string) {
 
 async function discover() {
   const n = await prisma.business.count({ where: { status: { in: ['new', 'review', 'call_queue'] } } });
-  if (n >= 30) return;
+  if (n >= 30) {
+    activity('discover', `Lead pool is full (${n} businesses waiting), so no new search this cycle`);
+    return;
+  }
   let remaining = 30 - n;
-  for (const c of await prisma.campaign.findMany({ where: { active: true } })) {
+  const campaigns = await prisma.campaign.findMany({ where: { active: true } });
+  if (!campaigns.length) activity('discover', 'No active campaigns. Add a niche and city to start finding businesses.', 'warn');
+  else activity('discover', `Lead pool has room for ${remaining} more; searching ${campaigns.length} ${campaigns.length === 1 ? 'campaign' : 'campaigns'}`);
+  for (const c of campaigns) {
     if (remaining <= 0) break;
     try {
       const filter = c.osmFilter.split('=');
@@ -418,17 +429,20 @@ async function discover() {
       const countryCode = countryCodeFor(c.country);
       if (!countryCode) {
         console.info(JSON.stringify({ level: 'info', event: 'discovery_market_unrecognized', city: c.city, country: c.country }));
+        activity('discover', `Skipped ${c.city}: country "${c.country ?? 'unknown'}" is not a supported market`, 'warn');
         continue;
       }
       const market = await prisma.market.findUnique({ where: { code: countryCode }, select: { enabled: true } });
       if (!market?.enabled) {
         console.info(JSON.stringify({ level: 'info', event: 'discovery_market_disabled', city: c.city, country: countryCode }));
+        activity('discover', `Skipped ${c.city}: the ${countryCode} market is not enabled`, 'warn');
         continue;
       }
       const [key, value] = filter;
       if (!/^[a-zA-Z0-9:_-]+$/.test(key) || !/^[a-zA-Z0-9:_ -]+$/.test(value)) {
         throw new Error('Campaign OSM filter contains unsupported characters');
       }
+      activity('discover', `Locating ${c.city}, ${countryCode} on the map`);
       const city = await geocodeCity(c.city, countryCode);
       const area = city.osmType === 'relation' && city.osmId
         ? `area(${Number(city.osmId) + 3_600_000_000})->.a;`
@@ -446,8 +460,11 @@ async function discover() {
         nwr["${key}"="${value}"]["name"]["contact:phone"]["website"!~"."]["contact:website"!~"."]["url"!~"."]${spatialFilter};
         nwr["${key}"="${value}"]["name"]["opening_hours"]["website"!~"."]["contact:website"!~"."]["url"!~"."]${spatialFilter};
       );out tags center 80;`;
+      activity('discover', `Searching OpenStreetMap for ${c.niche} businesses with websites in ${c.city}`);
       const siteResult = await queryOverpass(siteQuery);
+      activity('discover', `Searching OpenStreetMap for ${c.niche} businesses without websites in ${c.city}`);
       const noSiteResult = await queryOverpass(noSiteQuery);
+      activity('discover', `OpenStreetMap returned ${siteResult.elements.length + noSiteResult.elements.length} listings; filtering out chains and ineligible ones`);
       const result = {
         endpoints: [siteResult.endpoint, noSiteResult.endpoint],
         elements: [...siteResult.elements, ...noSiteResult.elements]
@@ -534,6 +551,12 @@ async function discover() {
           if (email) await addContactIfAllowed(business.id, email, `https://www.openstreetmap.org/${business.osmId}`);
         }
       }
+      {
+        const siteCount = limitedCandidates.filter((business) => business.track === 'site').length;
+        activity('discover', inserted
+          ? `Added ${inserted} new ${c.niche} ${inserted === 1 ? 'business' : 'businesses'} in ${c.city} (${siteCount} with websites, ${limitedCandidates.length - siteCount} without)`
+          : `No new ${c.niche} businesses in ${c.city}; all ${result.elements.length} listings were already known or ineligible`, inserted ? 'success' : 'info');
+      }
       console.info(JSON.stringify({
         level: 'info',
         event: 'discovery_campaign_complete',
@@ -555,6 +578,7 @@ async function discover() {
         city: c.city,
         message: errorMessage(error),
       }));
+      activity('discover', `Search in ${c.city} failed: ${errorMessage(error)}`, 'error');
     }
   }
 }
@@ -987,15 +1011,21 @@ async function auditAndDraft() {
   });
   // Allocation bandit + re-contact policy (sequence limit, minimum probability, learned gamma) live in brain.ts.
   const selected = await chooseCandidates(businesses, 3);
+  activity('audit', selected.length
+    ? `Picked ${selected.length} of ${businesses.length} waiting ${businesses.length === 1 ? 'business' : 'businesses'} to research: ${selected.map((item) => item.business.name ?? 'unnamed').join(', ')}`
+    : 'No businesses waiting for research');
   for (const candidate of selected) {
     const b = candidate.business;
+    const label = b.name ?? `business #${b.id}`;
     try {
+      activity('audit', `Researching ${label}${b.city ? ` in ${b.city}` : ''} (${b.track === 'site' ? 'has a website' : 'no website listed'})`);
       const findings: string[] = [];
       const signals: Array<{ key: string; evidence: string; sourceUrl?: string }> = [];
       let screenshot: Buffer | null = null;
       let score = 40;
       if (b.country === 'GB' && b.name && env.COMPANIES_HOUSE_API_KEY?.trim()) {
         try {
+          activity('audit', `Checking Companies House for ${label}`);
           const registryMatch = await lookupCompaniesHouse(b.name, env.COMPANIES_HOUSE_API_KEY);
           if (registryMatch) {
             const details = [
@@ -1070,6 +1100,7 @@ async function auditAndDraft() {
             },
           });
           console.info(JSON.stringify({ level: 'info', event: 'no_site_lead_without_email', businessId: b.id, hasPhone: Boolean(b.phone) }));
+          activity('audit', b.phone ? `${label} has no public email; added to the manual call queue` : `${label} has no public email or phone; skipped`, 'warn');
           continue;
         }
       } else {
@@ -1078,7 +1109,9 @@ async function auditAndDraft() {
           continue;
         }
         const startUrl = normalizeWebsite(b.websiteUrl);
+        activity('audit', `Checking robots.txt on ${new URL(startUrl).hostname}`);
         if (!await robotsAllows(startUrl, new URL(startUrl).pathname)) {
+          activity('audit', `${new URL(startUrl).hostname} asks crawlers not to visit; skipped ${label}`, 'warn');
           await prisma.business.update({
             where: { id: b.id },
             data: { status: 'skipped', findings: ['robots_disallow'], auditedAt: new Date() },
@@ -1086,6 +1119,7 @@ async function auditAndDraft() {
           console.info(JSON.stringify({ level: 'info', event: 'website_audit_robots_disallow', businessId: b.id, url: startUrl }));
           continue;
         }
+        activity('audit', `Loading the homepage of ${new URL(startUrl).hostname}`);
         const home = await fetchPublicPage(startUrl);
         if (
           new URL(home.url).origin !== new URL(startUrl).origin ||
@@ -1115,6 +1149,7 @@ async function auditAndDraft() {
           .filter((href): href is string => Boolean(href))
           .filter((href) => /contact|about|team/i.test(href))
           .slice(0, 3);
+        if (contactLinks.length) activity('audit', `Reading ${contactLinks.length} contact/about ${contactLinks.length === 1 ? 'page' : 'pages'} on ${hostname}`);
         for (const href of contactLinks) {
           try {
             const url = new URL(href, home.url);
@@ -1179,6 +1214,7 @@ async function auditAndDraft() {
         const platform = /wordpress|wix|squarespace|shopify|webflow|weebly/i.exec(generator)?.[0]
           ?? /wp-content|wixstatic|squarespace|cdn\.shopify|webflow\.com/i.exec($.html())?.[0];
         if (platform) signals.push({ key: 'platform', evidence: `Homepage HTML indicates ${platform}`, sourceUrl: home.url });
+        activity('audit', `Site checks on ${hostname}: ${findings.length ? findings.map((item) => item.replaceAll('_', ' ')).join(', ') : 'no basic issues found'}`);
         const foundEmails = new Map<string, string>();
         for (const page of htmlPages) {
           const mailto = page.$('a[href^="mailto:"]').toArray()
@@ -1201,13 +1237,16 @@ async function auditAndDraft() {
           ]);
           if (!suppressed && !duplicate) {
             const created = await prisma.contact.create({ data: { businessId: b.id, email, sourceUrl: url }, select: { id: true, email: true } });
+            activity('audit', `Found a verified business email for ${label} (${email})`, 'success');
             contact = created;
             break;
           }
         }
         if (env.PAGESPEED_API_KEY && findings.length > 0) {
           try {
+            activity('audit', `Running a Google PageSpeed mobile audit on ${hostname} (this takes 10-30 seconds)`);
             const pageSpeed = await pageSpeedScores(home.url);
+            activity('audit', `PageSpeed for ${hostname}: ${pageSpeed.scores.map((item) => `${item.label} ${item.value}`).join(', ')}${pageSpeed.lcpDisplay ? `, load ${pageSpeed.lcpDisplay}` : ''}`);
             screenshot = pageSpeed.thumbnail;
             for (const item of pageSpeed.scores) {
               signals.push({ key: item.key, evidence: `Mobile PageSpeed ${item.label}: ${item.value}/100`, sourceUrl: home.url });
@@ -1227,11 +1266,13 @@ async function auditAndDraft() {
             }
           } catch (error) {
             console.error(JSON.stringify({ level: 'error', event: 'pagespeed_failed', businessId: b.id, message: errorMessage(error) }));
+            activity('audit', `PageSpeed audit failed for ${label}: ${errorMessage(error)}`, 'warn');
           }
         }
       }
       if (!contact?.email) {
         const noEmailStatus = b.track === 'no_site' && b.phone ? 'call_queue' : 'skipped';
+        activity('audit', `No usable email found for ${label}; ${noEmailStatus === 'call_queue' ? 'added to the call queue' : 'skipped'}`, 'warn');
         await prisma.business.update({
           where: { id: b.id },
           data: { status: noEmailStatus, findings, score: Math.max(0, Math.min(100, score)), scoreSignals: signals, auditedAt: new Date() },
@@ -1245,6 +1286,7 @@ async function auditAndDraft() {
       const cooldownActive = ledger?.status === 'cooldown' && ledger.eligibleAfter !== null && ledger.eligibleAfter > new Date();
       const permanentlyBlocked = ledger && !['eligible', 'cooldown'].includes(ledger.status);
       if (suppressed || cooldownActive || permanentlyBlocked) {
+        activity('audit', `${label} skipped: ${suppressed ? 'address is on the do-not-contact list' : cooldownActive ? 'contacted recently (cooldown)' : 'contact is blocked'}`, 'warn');
         await prisma.business.update({
           where: { id: b.id },
           data: { status: 'cooldown', findings: [...findings, suppressed ? 'contact_suppressed' : 'contact_cooldown'], auditedAt: new Date() },
@@ -1252,6 +1294,7 @@ async function auditAndDraft() {
         continue;
       }
       if (!findings.length) {
+        activity('audit', `The website of ${label} looks healthy; nothing honest to pitch, so skipped`);
         await prisma.business.update({
           where: { id: b.id },
           data: { status: 'skipped', score: Math.max(0, Math.min(100, score)), scoreSignals: signals, auditedAt: new Date() },
@@ -1273,6 +1316,7 @@ async function auditAndDraft() {
       const angle = await chooseAngle(findings, usedAngles);
       const subjectStyle = await chooseSubjectStyle();
       const memory = await getDraftingMemory({ niche: b.niche, country: b.country, track: b.track });
+      activity('draft', `Writing a draft for ${label} (angle: ${angle.replaceAll('_', ' ')}, ${subjectStyle} subject)`);
       const d = await draft(
         b,
         b.track === 'site' ? b.websiteUrl ?? '' : '',
@@ -1321,12 +1365,16 @@ async function auditAndDraft() {
           data: { status: 'in_review', blockReason: null },
         })] : []),
       ]);
+      activity('draft', d.manualRequired
+        ? `Draft for ${label} needs manual writing: the suggestion failed a quality check`
+        : `Draft ready for your review: ${label}`, d.manualRequired ? 'warn' : 'success');
     } catch (error) {
       await prisma.business.update({
         where: { id: b.id },
         data: { status: 'skipped', findings: ['audit_error'], auditedAt: new Date() },
       });
       console.error(JSON.stringify({ level: 'error', event: 'business_audit_failed', businessId: b.id, message: errorMessage(error) }));
+      activity('audit', `Research failed for ${label}: ${errorMessage(error)}`, 'error');
     }
   }
 }
@@ -1580,6 +1628,7 @@ async function sendDue() {
       event: 'live_send_blocked',
       message: 'Live sending requires a real POSTAL_ADDRESS and HTTPS APP_ORIGIN.',
     }));
+    activity('send', 'Live sending is blocked: set a real POSTAL_ADDRESS and an HTTPS APP_ORIGIN', 'error');
     return;
   }
   await prisma.email.updateMany({
@@ -1589,9 +1638,16 @@ async function sendDue() {
   const n = await prisma.email.count({
     where: { status: 'sent', sentAt: { gt: new Date(now.getTime() - 24 * 60 * 60 * 1000) } },
   });
-  if (n >= await getEffectiveDailyCap(now)) return;
+  const cap = await getEffectiveDailyCap(now);
+  if (n >= cap) {
+    activity('send', `Daily limit reached (${n} of ${cap} sent in the last 24 hours); waiting`);
+    return;
+  }
   const enabledMarkets = await prisma.market.findMany({ where: { enabled: true }, select: { code: true } });
-  if (!enabledMarkets.length) return;
+  if (!enabledMarkets.length) {
+    activity('send', 'No markets are enabled, so nothing can be sent', 'warn');
+    return;
+  }
   const email = await prisma.email.findFirst({
     where: {
       status: 'approved',
@@ -1615,24 +1671,34 @@ async function sendDue() {
     include: { contact: true, business: true },
     orderBy: { scheduledFor: 'asc' },
   });
-  if (!email?.contact?.email) return;
+  if (!email?.contact?.email) {
+    const approved = await prisma.email.count({ where: { status: 'approved' } });
+    activity('send', approved
+      ? `${approved} approved ${approved === 1 ? 'email is' : 'emails are'} waiting for an active Send Plan window`
+      : 'Nothing approved to send right now');
+    return;
+  }
   const to = email.contact.email;
+  const recipient = email.business?.name ?? to;
   const isFollowUp = email.sequenceStep > 0 && Boolean(email.gmailThreadId);
   if (isFollowUp && await prisma.replyRecord.findFirst({
     where: { threadId: email.gmailThreadId!, classification: { in: ['human', 'auto_reply', 'unsubscribe', 'complaint', 'bounce'] } },
     select: { id: true },
   })) {
     await prisma.email.update({ where: { id: email.id }, data: { status: 'rejected', error: 'reply_received_before_follow_up' } });
+    activity('send', `Cancelled follow-up to ${recipient}: they already replied`);
     return;
   }
   if (await prisma.suppression.findUnique({ where: { email: to }, select: { email: true } })) {
     await prisma.email.update({ where: { id: email.id }, data: { status: 'rejected', error: 'suppressed' } });
+    activity('send', `Cancelled email to ${recipient}: address unsubscribed or bounced`, 'warn');
     return;
   }
   const ledger = await prisma.contactLedger.findUnique({ where: { email: to } });
   if (ledger && (!['eligible', 'in_review', 'cooldown'].includes(ledger.status) ||
       (!isFollowUp && ledger.eligibleAfter && ledger.eligibleAfter > now))) {
     await prisma.email.update({ where: { id: email.id }, data: { status: 'rejected', error: 'contact_ledger_block' } });
+    activity('send', `Cancelled email to ${recipient}: contact policy blocks it`, 'warn');
     return;
   }
   const domain = email.business?.websiteUrl
@@ -1645,6 +1711,7 @@ async function sendDue() {
       where: { id: email.id },
       data: { scheduledFor: nextWindow, error: 'domain_lock_deferred' },
     });
+    activity('send', `Postponed ${recipient}: this domain was emailed recently; moved to ${nextWindow.toISOString()}`);
     return;
   }
   const claimed = await prisma.email.updateMany({
@@ -1685,6 +1752,7 @@ async function sendDue() {
         select: { rfcMessageId: true },
       })
       : null;
+    activity('send', `${DRY ? 'Simulating send' : 'Sending'} ${isFollowUp ? `follow-up #${email.sequenceStep}` : 'email'} to ${recipient} <${to}>`);
     const sentMessage = DRY
       ? { id: 'dry-run', threadId: `dry-run-${email.gmailThreadId ?? email.id}`, messageId }
       : await gmailSend(to, email.subject ?? '', body, unsubscribe, messageId, email.gmailThreadId ?? undefined, previousMessage?.rfcMessageId ?? undefined);
@@ -1750,11 +1818,13 @@ async function sendDue() {
         data: { state: 'completed' },
       }),
     ]);
+    activity('send', `${DRY ? 'Dry run: recorded as sent' : 'Sent'} to ${recipient}`, 'success');
   } catch (err) {
     await prisma.email.update({
       where: { id: email.id },
       data: { status: 'failed', error: errorMessage(err).slice(0, 300) },
     });
+    activity('send', `Sending to ${recipient} failed: ${errorMessage(err)}`, 'error');
   }
 }
 

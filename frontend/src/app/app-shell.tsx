@@ -4,7 +4,7 @@ import { usePathname } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 
-type IconName = 'home' | 'leads' | 'inbox' | 'deals' | 'chart' | 'gauge' | 'globe' | 'brain' | 'bell' | 'phone' | 'shield' | 'gear' | 'more' | 'logout';
+type IconName = 'live' | 'home' | 'leads' | 'inbox' | 'deals' | 'chart' | 'gauge' | 'globe' | 'brain' | 'bell' | 'phone' | 'shield' | 'gear' | 'more' | 'logout';
 type NavItem = { href: string; label: string; icon: IconName; badge?: 'to_review' | 'pending_replies'; owner?: boolean };
 type Account = { email: string; role: string };
 type Counts = { to_review: number; pending_replies: number; overdue_replies: number };
@@ -12,6 +12,7 @@ type Counts = { to_review: number; pending_replies: number; overdue_replies: num
 const GROUPS: Array<{ title: string; items: NavItem[] }> = [
   { title: 'Workspace', items: [
     { href: '/', label: 'Overview', icon: 'home', badge: 'to_review' },
+    { href: '/live', label: 'Live', icon: 'live' },
     { href: '/inbox', label: 'Replies', icon: 'inbox', badge: 'pending_replies' },
     { href: '/leads', label: 'Leads', icon: 'leads' },
     { href: '/pipeline', label: 'Deals', icon: 'deals' },
@@ -31,12 +32,13 @@ const GROUPS: Array<{ title: string; items: NavItem[] }> = [
     { href: '/admin', label: 'Admin & Security', icon: 'shield', owner: true },
   ] },
 ];
-const TABS = ['/', '/inbox', '/leads', '/pipeline'];
+const TABS = ['/', '/live', '/inbox', '/leads'];
 // Pages that render without the workspace chrome.
 const BARE = ['/login', '/privacy', '/offline'];
 
 function Icon({ name }: { name: IconName }) {
   const paths: Record<IconName, ReactNode> = {
+    live: <><path d="M2 12h4l2.5-6 4 13 3-9 1.5 2H22" /></>,
     home: <><path d="M3 10.5 12 3l9 7.5" /><path d="M5 9.5V20a1 1 0 0 0 1 1h4v-6h4v6h4a1 1 0 0 0 1-1V9.5" /></>,
     inbox: <><path d="M3 13h5l1.5 3h5L16 13h5" /><path d="M5.5 5h13L21 13v6a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-6Z" /></>,
     leads: <><circle cx="9" cy="8" r="3.5" /><path d="M2.5 20a6.5 6.5 0 0 1 13 0" /><path d="M16 4.5a3.5 3.5 0 0 1 0 7M18 14a6.5 6.5 0 0 1 3.5 6" /></>,

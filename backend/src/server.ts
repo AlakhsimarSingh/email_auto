@@ -21,7 +21,8 @@ import {
   telegramWebhookConfigured,
   testNotificationChannel,
 } from './notifications.js';
-import { getWarmupState } from './warmup.js';
+import { getEffectiveDailyCap, getWarmupState } from './warmup.js';
+import { activitySnapshot, loadActivity } from './activity.js';
 import { registerBrainRoutes } from './brain-routes.js';
 import { registerAnalyticsExtraRoutes } from './analytics-extra.js';
 import { autoApproveSignal, recordDraftEdit } from './brain.js';
@@ -384,6 +385,56 @@ app.register(async (r) => {
     const { id } = request.params as { id: string };
     if (!await removeNotificationChannel(id, request.auth!.userId)) return reply.code(404).send({ error: 'notification_channel_not_found' });
     return { ok: true };
+  });
+  // Live page: the feed is in memory, so this is cheap to poll every few seconds.
+  r.get('/activity', async (request) => {
+    const since = Number((request.query as { since?: string }).since ?? 0);
+    return activitySnapshot(Number.isSafeInteger(since) && since > 0 ? since : 0);
+  });
+  // Live page: database-backed pipeline and Send Plan progress, polled less often.
+  r.get('/activity/summary', async () => {
+    const now = new Date();
+    const [businesses, emails, sentToday, cap, plans, lastTick] = await Promise.all([
+      prisma.business.groupBy({ by: ['status'], _count: { _all: true } }),
+      prisma.email.groupBy({ by: ['status'], _count: { _all: true } }),
+      prisma.email.count({ where: { status: 'sent', sentAt: { gt: new Date(now.getTime() - 24 * 60 * 60_000) } } }),
+      getEffectiveDailyCap(now),
+      prisma.sendPlan.findMany({
+        where: { OR: [{ state: { in: ['announced', 'frozen'] }, endsAt: { gt: now } }, { createdAt: { gt: new Date(now.getTime() - 3 * 24 * 60 * 60_000) } }] },
+        orderBy: { startsAt: 'asc' },
+        take: 8,
+        select: {
+          id: true, state: true, announcedAt: true, startsAt: true, endsAt: true,
+          items: { select: { email: { select: { status: true, business: { select: { country: true } } } } } },
+        },
+      }),
+      prisma.appSetting.findUnique({ where: { key: 'tick_last_finished' }, select: { value: true } }),
+    ]);
+    const count = (rows: Array<{ status: string | null; _count: { _all: number } }>) =>
+      Object.fromEntries(rows.map((row) => [row.status ?? 'unknown', row._count._all]));
+    return {
+      generated_at: now.toISOString(),
+      dry_run: env.DRY_RUN !== 'false',
+      last_tick_at: typeof lastTick?.value === 'string' ? lastTick.value : null,
+      businesses: count(businesses),
+      emails: count(emails),
+      sent_24h: sentToday,
+      daily_cap: cap,
+      plans: plans.map((plan) => {
+        const statuses = plan.items.map((item) => item.email.status);
+        return {
+          id: plan.id,
+          state: plan.state,
+          announced_at: plan.announcedAt?.toISOString() ?? null,
+          starts_at: plan.startsAt.toISOString(),
+          ends_at: plan.endsAt.toISOString(),
+          countries: [...new Set(plan.items.map((item) => item.email.business?.country).filter(Boolean))],
+          total: statuses.length,
+          sent: statuses.filter((status) => status === 'sent').length,
+          failed: statuses.filter((status) => status === 'failed' || status === 'rejected').length,
+        };
+      }),
+    };
   });
   r.get('/usage', async (request, reply) => {
     const limitMb = Number(env.SUPABASE_DB_LIMIT_MB ?? 500);
@@ -1319,6 +1370,7 @@ app.register(async (r) => {
   });
 });
 
+await loadActivity();
 await app.listen({ port: Number(env.PORT ?? 8080), host: '0.0.0.0' });
 
 const awakeMeter = startAwakeMeter();

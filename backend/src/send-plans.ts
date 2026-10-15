@@ -4,6 +4,7 @@ import { prisma } from './db.js';
 import { notifySendPlanAnnounced } from './notifications.js';
 import { nextRecipientWindow, recommendActiveWindow, SEND_PLAN_MIN_NOTICE_MS } from './scheduling.js';
 import { getEffectiveDailyCap } from './warmup.js';
+import { activity } from './activity.js';
 
 type CreateSendPlanInput = {
   country?: string;
@@ -184,6 +185,7 @@ export async function createPlansForEligibleMarkets() {
     const country = announcedCountries.get(event.target);
     return country ? [country] : [];
   }));
+  if (!markets.length) activity('plan', 'No markets are enabled, so no Send Plans can be prepared', 'warn');
   for (const market of markets) {
     const existingPlan = await prisma.sendPlan.findFirst({
       where: {
@@ -193,8 +195,14 @@ export async function createPlansForEligibleMarkets() {
       },
       select: { id: true },
     });
-    if (existingPlan) continue;
-    if (recentlyVetoedCountries.has(market.code)) continue;
+    if (existingPlan) {
+      activity('plan', `${market.code}: a Send Plan is already announced or running`);
+      continue;
+    }
+    if (recentlyVetoedCountries.has(market.code)) {
+      activity('plan', `${market.code}: you vetoed a plan recently, so waiting 24 hours before proposing another`);
+      continue;
+    }
     const recentlyPlanned = await prisma.sendPlan.findFirst({
       where: {
         createdAt: { gte: new Date(now.getTime() - SEND_PLAN_MIN_NOTICE_MS) },
@@ -202,14 +210,23 @@ export async function createPlansForEligibleMarkets() {
       },
       select: { id: true },
     });
-    if (recentlyPlanned) continue;
+    if (recentlyPlanned) {
+      activity('plan', `${market.code}: a plan was created in the last 24 hours`);
+      continue;
+    }
     const result = await createAnnouncedSendPlan({
       country: market.code,
       createdBy: owner.email,
       adminUserId: owner.id,
       now,
     });
+    if (!('error' in result)) {
+      activity('plan', `Announced a Send Plan for ${market.code}: ${result.emailCount} ${result.emailCount === 1 ? 'email' : 'emails'} from ${result.startsAt.toISOString()} (at least 24 hours' notice)`, 'success');
+    } else if (result.error === 'no_plan_eligible_emails') {
+      activity('plan', `${market.code}: no approved emails yet to put in a plan`);
+    }
     if ('error' in result && result.error !== 'no_plan_eligible_emails') {
+      activity('plan', `${market.code}: could not create a Send Plan (${result.error.replaceAll('_', ' ')})`, 'error');
       console.error(JSON.stringify({
         level: 'error',
         event: 'automatic_send_plan_failed',
