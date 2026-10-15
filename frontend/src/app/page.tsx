@@ -23,6 +23,7 @@ type Draft = {
   draft_confidence: number | null;
   selection?: Record<string, unknown> | null;
   agent_low_risk?: boolean;
+  signature_preview?: string;
 };
 
 type HeldEmail = {
@@ -258,6 +259,12 @@ export default function Review() {
                   <input id={`subject-${draft.id}`} className="draft-subject" value={draft.subject} onChange={(event) => edit(draft.id, 'subject', event.target.value)} />
                   <label className="field-label" htmlFor={`body-${draft.id}`}>Message</label>
                   <textarea id={`body-${draft.id}`} className="draft-body" rows={8} value={draft.body} onChange={(event) => edit(draft.id, 'body', event.target.value)} />
+                  {draft.signature_preview && (
+                    <div className="signature-preview">
+                      <span>Added automatically when sent</span>
+                      <pre>{draft.signature_preview}</pre>
+                    </div>
+                  )}
                   {(draft.subject !== (draft.original_subject ?? draft.subject) || draft.body !== (draft.original_body ?? draft.body)) && (
                     <details className="draft-diff">
                       <summary>Review edits against original</summary>

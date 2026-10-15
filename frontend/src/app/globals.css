@@ -463,6 +463,9 @@ h3 { margin-bottom: 0; font-size: 16px; font-weight: 600; }
 .evidence-details strong { color: var(--label); text-transform: capitalize; }
 .draft-diff > div { margin-top: 10px; }
 .draft-diff pre { max-height: 200px; overflow: auto; margin: 6px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; border-radius: 10px; background: var(--nested); color: var(--label); padding: 12px; font: 14px/1.55 var(--font); }
+.signature-preview { margin-top: 8px; border-radius: var(--radius-sm); background: var(--nested); padding: 10px 12px; }
+.signature-preview span { display: block; margin-bottom: 4px; color: var(--label-2); font-size: 12px; font-weight: 600; letter-spacing: .03em; text-transform: uppercase; }
+.signature-preview pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--label-2); font: 14px/1.55 var(--font); }
 .draft-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
 
 .pipeline-panel h2 { margin-top: 2px; }

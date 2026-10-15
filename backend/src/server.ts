@@ -8,7 +8,7 @@ import { authenticate, registerAuthRoutes, requireOwner, requireStepUp } from '.
 import { nextRecipientWindow, SEND_PLAN_MIN_NOTICE_MS } from './scheduling.js';
 import { createAnnouncedSendPlan } from './send-plans.js';
 import { verifyUnsubscribeToken } from './unsubscribe.js';
-import { getPortfolioSettings, parsePortfolioSettings, PORTFOLIO_SETTING_KEY } from './portfolio.js';
+import { getPortfolioSettings, parsePortfolioSettings, portfolioEmailFooter, PORTFOLIO_SETTING_KEY } from './portfolio.js';
 import { parsePushSubscription, pushConfiguration, sendDevicePush } from './push.js';
 import {
   acknowledgeWorkspaceNotification,
@@ -1178,8 +1178,15 @@ app.register(async (r) => {
     }
     return { ok: true };
   });
-  r.get('/emails/review', async () => {
+  r.get('/emails/review', async (request) => {
     const signal = await autoApproveSignal();
+    // Reviewers see the signature that sendDue appends, so portfolio links are visible before approval.
+    const portfolio = await getPortfolioSettings().catch((error) => {
+      request.log.error({ err: error }, 'Stored portfolio settings are invalid');
+      return { portfolioUrl: null, latestWork: [] };
+    });
+    const signaturePreview = (body: string) =>
+      `${portfolioEmailFooter(portfolio, body)}\n\n--\n${env.SENDER_NAME ?? ''}, ${env.POSTAL_ADDRESS ?? ''}\nTo stop receiving these emails, unsubscribe here: [one-click unsubscribe link]`.trimStart();
     const emails = await prisma.email.findMany({
       where: { status: 'drafted', business: { is: { status: 'review' } }, contact: { isNot: null } },
       orderBy: { createdAt: 'asc' },
@@ -1209,6 +1216,7 @@ app.register(async (r) => {
       selection: email.selectionInfo ?? null,
       agent_low_risk: signal.eligible && !email.manualRequired && (email.draftConfidence ?? 0) >= 0.8,
       screenshot_data: email.business?.screenshot ? Buffer.from(email.business.screenshot).toString('base64') : null,
+      signature_preview: signaturePreview(email.body ?? ''),
     }));
   });
   r.post('/emails/:id/approve', async (req, reply) => {

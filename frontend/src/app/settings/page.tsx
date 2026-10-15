@@ -25,6 +25,8 @@ export default function SettingsPage() {
   const [markets, setMarkets] = useState<Market[]>([]);
   const [planCountry, setPlanCountry] = useState('');
   const [portfolio, setPortfolio] = useState<PortfolioSettings>({ portfolioUrl: '', latestWork: [] });
+  // Saving stays disabled until stored links load, so a failed load can never overwrite them with blanks.
+  const [portfolioLoaded, setPortfolioLoaded] = useState(false);
   const [email, setEmail] = useState('');
   const [ready, setReady] = useState(false);
   const [verified, setVerified] = useState(false);
@@ -56,19 +58,24 @@ export default function SettingsPage() {
         return;
       }
       setAdmins(await adminResponse.json());
-      const [plansResponse, portfolioResponse, marketsResponse] = await Promise.all([
-        fetch('/api/proxy/send-plans'),
-        fetch('/api/proxy/settings/portfolio'),
-        fetch('/api/proxy/markets'),
+      // Each section loads independently so one slow or failed request cannot blank the others.
+      const [plansResult, portfolioResult, marketsResult] = await Promise.allSettled([
+        fetch('/api/proxy/send-plans').then((response) => { if (!response.ok) throw new Error(); return response.json() as Promise<SendPlan[]>; }),
+        fetch('/api/proxy/settings/portfolio').then((response) => { if (!response.ok) throw new Error(); return response.json() as Promise<{ portfolioUrl: string | null; latestWork: PortfolioSettings['latestWork'] }>; }),
+        fetch('/api/proxy/markets').then((response) => { if (!response.ok) throw new Error(); return response.json() as Promise<Market[]>; }),
       ]);
-      if (!plansResponse.ok || !portfolioResponse.ok || !marketsResponse.ok) throw new Error('Could not load workspace settings.');
-      setPlans(await plansResponse.json());
-      const marketData = await marketsResponse.json() as Market[];
-      const enabledMarkets = marketData.filter((market) => market.enabled);
-      setMarkets(enabledMarkets);
-      setPlanCountry((current) => enabledMarkets.some((market) => market.code === current) ? current : enabledMarkets[0]?.code ?? '');
-      const portfolioData = await portfolioResponse.json() as { portfolioUrl: string | null; latestWork: PortfolioSettings['latestWork'] };
-      setPortfolio({ portfolioUrl: portfolioData.portfolioUrl ?? '', latestWork: portfolioData.latestWork });
+      const failed: string[] = [];
+      if (plansResult.status === 'fulfilled') setPlans(plansResult.value); else failed.push('Send Plans');
+      if (marketsResult.status === 'fulfilled') {
+        const enabledMarkets = marketsResult.value.filter((market) => market.enabled);
+        setMarkets(enabledMarkets);
+        setPlanCountry((current) => enabledMarkets.some((market) => market.code === current) ? current : enabledMarkets[0]?.code ?? '');
+      } else failed.push('markets');
+      if (portfolioResult.status === 'fulfilled') {
+        setPortfolio({ portfolioUrl: portfolioResult.value.portfolioUrl ?? '', latestWork: portfolioResult.value.latestWork });
+        setPortfolioLoaded(true);
+      } else failed.push('portfolio links');
+      if (failed.length) setError(`Could not load ${failed.join(', ')}. Your saved settings are unchanged; press Refresh or reload the page.`);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : 'Could not load settings.');
     } finally {
@@ -294,9 +301,10 @@ export default function SettingsPage() {
                   </div>
                 ))}
                 <p className="portfolio-form-note">Links must use HTTPS. Emails remain plain text; every configured link is written out in the signature for broad mail-client compatibility.</p>
-                <button className="approve-button" type="submit" disabled={busy || !verified}>
+                <button className="approve-button" type="submit" disabled={busy || !verified || !portfolioLoaded}>
                   {busy ? 'Saving…' : 'Save portfolio links'}
                 </button>
+                {!portfolioLoaded && !loading && <p className="portfolio-form-note">Saved links have not loaded yet, so saving is disabled to protect them.</p>}
               </form>
             </section>
             <section className="admin-panel" id="send-plans">
