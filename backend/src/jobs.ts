@@ -410,12 +410,33 @@ function isDisposableEmail(email: string) {
   ].some((blocked) => domain === blocked || domain.endsWith(`.${blocked}`)));
 }
 
+const DISCOVERY_REFILL_BELOW = 15;
+const DISCOVERY_MIN_INTERVAL_MS = 30 * 60_000;
+const DISCOVERY_FAILURE_BACKOFF_MS = 2 * 60 * 60_000;
+const DISCOVERY_STATE_KEY = 'discovery_last_attempt';
+
 async function discover() {
   const n = await prisma.business.count({ where: { status: { in: ['new', 'review', 'call_queue'] } } });
-  if (n >= 30) {
-    activity('discover', `Lead pool is full (${n} businesses waiting), so no new search this cycle`);
+  if (n >= DISCOVERY_REFILL_BELOW) {
+    activity('discover', `${n} businesses are already waiting, so no new search this cycle (searches when fewer than ${DISCOVERY_REFILL_BELOW} remain)`);
     return;
   }
+  // Public Overpass servers refuse IPs that query too often, so space searches out.
+  const lastAttempt = await prisma.appSetting.findUnique({ where: { key: DISCOVERY_STATE_KEY } });
+  const last = lastAttempt?.value as { at?: string; ok?: boolean } | undefined;
+  if (last?.at) {
+    const waitMs = (last.ok ? DISCOVERY_MIN_INTERVAL_MS : DISCOVERY_FAILURE_BACKOFF_MS) - (Date.now() - new Date(last.at).getTime());
+    if (waitMs > 0) {
+      activity('discover', `${last.ok ? 'Searched recently' : 'Last search failed'}; next OpenStreetMap search in about ${Math.ceil(waitMs / 60_000)} min`);
+      return;
+    }
+  }
+  let searchOk = true;
+  const recordAttempt = (ok: boolean) => prisma.appSetting.upsert({
+    where: { key: DISCOVERY_STATE_KEY },
+    create: { key: DISCOVERY_STATE_KEY, value: { at: new Date().toISOString(), ok } },
+    update: { value: { at: new Date().toISOString(), ok } },
+  });
   let remaining = 30 - n;
   const campaigns = await prisma.campaign.findMany({ where: { active: true } });
   if (!campaigns.length) activity('discover', 'No active campaigns. Add a niche and city to start finding businesses.', 'warn');
@@ -565,8 +586,10 @@ async function discover() {
         message: errorMessage(error),
       }));
       activity('discover', `Search in ${c.city} failed: ${errorMessage(error)}`, 'error');
+      searchOk = false;
     }
   }
+  if (campaigns.length) await recordAttempt(searchOk);
 }
 
 type OverpassElement = {
@@ -782,7 +805,7 @@ async function fetchPublicPage(value: string, allow404 = false) {
   throw new Error('Website exceeded the five-redirect limit');
 }
 
-async function limitedText(response: Response, maximumBytes: number) {
+async function limitedText(response: Response, maximumBytes: number, options: { truncate?: boolean } = {}) {
   const reader = response.body?.getReader();
   if (!reader) return '';
   const chunks: Uint8Array[] = [];
@@ -790,11 +813,18 @@ async function limitedText(response: Response, maximumBytes: number) {
   while (true) {
     const part = await reader.read();
     if (part.done) break;
-    size += part.value.byteLength;
-    if (size > maximumBytes) {
+    if (size + part.value.byteLength > maximumBytes) {
       await reader.cancel();
-      throw new Error(`Website response exceeds the ${maximumBytes}-byte audit limit`);
+      if (!options.truncate) throw new Error(`Website response exceeds the ${maximumBytes}-byte audit limit`);
+      // Meta tags, links and contact details live early in the page; the first N bytes are enough.
+      const remaining = maximumBytes - size;
+      if (remaining > 0) {
+        chunks.push(part.value.subarray(0, remaining));
+        size += remaining;
+      }
+      break;
     }
+    size += part.value.byteLength;
     chunks.push(part.value);
   }
   const all = new Uint8Array(size);
@@ -1131,7 +1161,7 @@ async function auditAndDraft() {
           });
           continue;
         }
-        const htmlPages = [{ url: home.url, $: load(await limitedText(home.response, 1_000_000)) }];
+        const htmlPages = [{ url: home.url, $: load(await limitedText(home.response, 1_000_000, { truncate: true })) }];
         const homePage = htmlPages[0]!;
         const hostname = new URL(home.url).hostname;
         const contactLinks = homePage.$('a[href]').toArray()
@@ -1149,7 +1179,7 @@ async function auditAndDraft() {
             if (new URL(page.url).hostname.toLowerCase() !== hostname.toLowerCase()) continue;
             if (new URL(page.url).pathname !== url.pathname && !await robotsAllows(home.url, new URL(page.url).pathname)) continue;
             if (!(page.response.headers.get('content-type') ?? '').toLowerCase().includes('text/html')) continue;
-            htmlPages.push({ url: page.url, $: load(await limitedText(page.response, 500_000)) });
+            htmlPages.push({ url: page.url, $: load(await limitedText(page.response, 500_000, { truncate: true })) });
           } catch (error) {
             console.info(JSON.stringify({ level: 'info', event: 'contact_page_skipped', businessId: b.id, url: href, message: errorMessage(error) }));
           }
