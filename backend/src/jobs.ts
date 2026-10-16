@@ -18,6 +18,7 @@ import { createPlansForEligibleMarkets } from './send-plans.js';
 import { lookupCompaniesHouse } from './companies-house.js';
 import { recordPageSpeedCall } from './usage-meter.js';
 import { activity, runStage, tickFinished, tickStarted } from './activity.js';
+import { nicheNoun } from './niches.js';
 import { chooseAngle, chooseCandidates, chooseSubjectStyle, getDraftingMemory, runBrainCycle } from './brain.js';
 import { containsBannedPhrase, STYLE_HINTS, type SubjectStyle } from './brain-math.js';
 
@@ -438,11 +439,17 @@ async function discover() {
     update: { value: { at: new Date().toISOString(), ok } },
   });
   let remaining = 30 - n;
-  const campaigns = await prisma.campaign.findMany({ where: { active: true } });
-  if (!campaigns.length) activity('discover', 'No active campaigns. Add a niche and city to start finding businesses.', 'warn');
-  else activity('discover', `Lead pool has room for ${remaining} more; searching ${campaigns.length} ${campaigns.length === 1 ? 'campaign' : 'campaigns'}`);
+  // One campaign per attempt, least recently searched first, keeps Overpass load low and rotates niches and cities.
+  const campaigns = await prisma.campaign.findMany({
+    where: { active: true },
+    orderBy: [{ lastSearchedAt: { sort: 'asc', nulls: 'first' } }, { id: 'asc' }],
+    take: 1,
+  });
+  if (!campaigns.length) activity('discover', 'No active campaigns. Choose niches and cities in Settings → Targeting.', 'warn');
+  else activity('discover', `Lead pool has room for ${remaining} more; searching OpenStreetMap for ${nicheNoun(campaigns[0]!.niche)} businesses in ${campaigns[0]!.city}`);
   for (const c of campaigns) {
     if (remaining <= 0) break;
+    await prisma.campaign.update({ where: { id: c.id }, data: { lastSearchedAt: new Date() } });
     try {
       const filter = c.osmFilter.split('=');
       if (filter.length !== 2 || !filter[0] || !filter[1] || !c.city) {
@@ -473,7 +480,7 @@ async function discover() {
           : '';
       const spatialFilter = area ? '(area.a)' : `(around:15000,${city.latitude},${city.longitude})`;
       const listingQuery = `[out:json][timeout:90];${area}nwr["${key}"="${value}"]["name"]${spatialFilter};out tags center 300;`;
-      activity('discover', `Searching OpenStreetMap for ${c.niche} businesses in ${c.city} (this can take up to a minute)`);
+      activity('discover', `Searching OpenStreetMap for ${nicheNoun(c.niche)} businesses in ${c.city} (this can take up to a minute)`);
       const listingResult = await queryOverpass(listingQuery);
       activity('discover', `OpenStreetMap returned ${listingResult.elements.length} listings; filtering out chains and ineligible ones`);
       const result = { endpoints: [listingResult.endpoint], elements: listingResult.elements };
@@ -518,7 +525,7 @@ async function discover() {
         candidates.push({
           osmId: `${element.type}/${element.id}`,
           name,
-          niche: c.niche,
+          niche: nicheNoun(c.niche),
           city: c.city,
           country: countryCode,
           websiteUrl: track === 'site' ? websiteUrl : null,
@@ -561,8 +568,8 @@ async function discover() {
       {
         const siteCount = limitedCandidates.filter((business) => business.track === 'site').length;
         activity('discover', inserted
-          ? `Added ${inserted} new ${c.niche} ${inserted === 1 ? 'business' : 'businesses'} in ${c.city} (${siteCount} with websites, ${limitedCandidates.length - siteCount} without)`
-          : `No new ${c.niche} businesses in ${c.city}; all ${result.elements.length} listings were already known or ineligible`, inserted ? 'success' : 'info');
+          ? `Added ${inserted} new ${nicheNoun(c.niche)} ${inserted === 1 ? 'business' : 'businesses'} in ${c.city} (${siteCount} with websites, ${limitedCandidates.length - siteCount} without)`
+          : `No new ${nicheNoun(c.niche)} businesses in ${c.city}; all ${result.elements.length} listings were already known or ineligible`, inserted ? 'success' : 'info');
       }
       console.info(JSON.stringify({
         level: 'info',
@@ -686,7 +693,7 @@ function isIneligible(tags: Record<string, string>) {
   return false;
 }
 
-function isSocialUrl(value: string) {
+export function isSocialUrl(value: string) {
   try {
     const host = new URL(normalizeWebsite(value)).hostname.toLowerCase().replace(/^www\./, '');
     return ['facebook.com', 'instagram.com', 'tiktok.com', 'linkedin.com', 'x.com', 'twitter.com'].some(
@@ -697,20 +704,23 @@ function isSocialUrl(value: string) {
   }
 }
 
-function isDirectoryUrl(value: string) {
+export function isDirectoryUrl(value: string) {
   try {
     const host = new URL(normalizeWebsite(value)).hostname.toLowerCase().replace(/^www\./, '');
     return [
       'yelp.com', 'tripadvisor.com', 'yellowpages.com', 'foursquare.com',
       'trustpilot.com', 'opentable.com', 'doordash.com', 'ubereats.com',
       'maps.google.com', 'google.com', 'maps.apple.com', 'maps.app.goo.gl',
+      // Regional directories and booking platforms: a business listed only here has no website of its own.
+      'yp.ca', 'yellowpages.ca', 'yelp.ca', '411.ca', 'canpages.ca', 'toronto.com', 'dine.to', 'bbb.org',
+      'homestars.com', 'houzz.com', 'booksy.com', 'fresha.com', 'vagaro.com', 'mindbodyonline.com', 'linktr.ee',
     ].some((domain) => host === domain || host.endsWith(`.${domain}`));
   } catch {
     return false;
   }
 }
 
-function normalizeWebsite(value: string) {
+export function normalizeWebsite(value: string) {
   const url = new URL(/^[a-z][a-z\d+.-]*:/i.test(value) ? value : `https://${value}`);
   if (url.protocol !== 'http:' && url.protocol !== 'https:') throw new Error('Business website must use HTTP or HTTPS');
   url.username = '';
@@ -803,6 +813,37 @@ async function fetchPublicPage(value: string, allow404 = false) {
     return { response, url };
   }
   throw new Error('Website exceeded the five-redirect limit');
+}
+
+export function decodeCloudflareEmail(hex: string) {
+  if (!/^[0-9a-f]{4,}$/i.test(hex) || hex.length % 2) return '';
+  const key = parseInt(hex.slice(0, 2), 16);
+  let out = '';
+  for (let index = 2; index < hex.length; index += 2) out += String.fromCharCode(parseInt(hex.slice(index, index + 2), 16) ^ key);
+  return out;
+}
+
+export function hiddenEmails($: ReturnType<typeof load>) {
+  const found: string[] = [];
+  $('[data-cfemail]').each((_, element) => { found.push(decodeCloudflareEmail($(element).attr('data-cfemail') ?? '')); });
+  $('a[href*="/cdn-cgi/l/email-protection#"]').each((_, element) => {
+    found.push(decodeCloudflareEmail(($(element).attr('href') ?? '').split('#')[1] ?? ''));
+  });
+  $('script[type="application/ld+json"]').each((_, element) => {
+    const visit = (value: unknown, depth: number): void => {
+      if (depth > 6 || !value || typeof value !== 'object') return;
+      for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+        if (key.toLowerCase() === 'email' && typeof child === 'string') found.push(child.replace(/^mailto:/i, ''));
+        else visit(child, depth + 1);
+      }
+    };
+    try { visit(JSON.parse($(element).text()), 0); } catch { /* ignore malformed structured data */ }
+  });
+  const text = $.root().text();
+  for (const match of text.matchAll(/([a-z0-9._%+-]+)\s*[[(]\s*at\s*[\])]\s*([a-z0-9-]+(?:\s*(?:[[(]\s*dot\s*[\])]|\.)\s*[a-z0-9-]+)+)/gi)) {
+    found.push(`${match[1]}@${match[2]!.replace(/\s*[[(]\s*dot\s*[\])]\s*/gi, '.').replace(/\s+/g, '')}`);
+  }
+  return found.filter((email) => email.includes('@'));
 }
 
 async function limitedText(response: Response, maximumBytes: number, options: { truncate?: boolean } = {}) {
@@ -919,7 +960,7 @@ async function pageSpeedScores(url: string) {
   };
 }
 
-async function addContactIfAllowed(businessId: number, email: string, sourceUrl: string) {
+export async function addContactIfAllowed(businessId: number, email: string, sourceUrl: string) {
   const normalized = normalizeContactEmail(email);
   if (!normalized || isDisposableEmail(normalized)) return;
   const business = await prisma.business.findUnique({ where: { id: businessId }, select: { country: true } });
@@ -1012,6 +1053,14 @@ function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
 }
 
+const RESEARCH_MAX_PER_CYCLE = 6;
+const RESEARCH_TIME_BUDGET_MS = 3 * 60_000;
+
+function dailyDraftTarget() {
+  const value = Number(env.DAILY_DRAFT_TARGET ?? 15);
+  return Number.isSafeInteger(value) && value >= 1 && value <= 200 ? value : 15;
+}
+
 async function auditAndDraft() {
   const now = new Date();
   const eligibleLedger = await prisma.contactLedger.findMany({
@@ -1019,22 +1068,38 @@ async function auditAndDraft() {
     select: { businessId: true },
   });
   const recontactIds = eligibleLedger.flatMap((row) => row.businessId === null ? [] : [row.businessId]);
+  // Research until the daily draft target is met, then pause to save PageSpeed calls and LLM tokens.
+  const target = dailyDraftTarget();
+  const draftedToday = await prisma.email.count({ where: { sequenceStep: 0, createdAt: { gte: new Date(now.getTime() - 24 * 60 * 60 * 1000) } } });
+  if (draftedToday >= target) {
+    activity('audit', `Daily draft target reached (${draftedToday} of ${target} in the last 24 hours); research resumes as older drafts age out`);
+    return;
+  }
+  // A random sample spreads research across niches and cities; businesses with a known email come first.
+  const sampled = await prisma.$queryRaw<Array<{ id: number }>>`
+    SELECT b.id FROM businesses b
+    WHERE b.status = 'new'
+    ORDER BY (EXISTS (SELECT 1 FROM contacts c WHERE c.business_id = b.id)) DESC, random()
+    LIMIT 120`;
   const businesses = await prisma.business.findMany({
     where: {
       OR: [
-        { status: 'new' },
+        { id: { in: sampled.map((row) => row.id) } },
         { id: { in: recontactIds }, status: 'contacted' },
       ],
     },
-    orderBy: [{ score: 'desc' }, { id: 'asc' }],
-    take: 40,
   });
   // Allocation bandit + re-contact policy (sequence limit, minimum probability, learned gamma) live in brain.ts.
-  const selected = await chooseCandidates(businesses, 3);
+  const selected = await chooseCandidates(businesses, Math.min(RESEARCH_MAX_PER_CYCLE, target - draftedToday));
+  const researchStarted = Date.now();
   activity('audit', selected.length
     ? `Picked ${selected.length} of ${businesses.length} waiting ${businesses.length === 1 ? 'business' : 'businesses'} to research: ${selected.map((item) => item.business.name ?? 'unnamed').join(', ')}`
     : 'No businesses waiting for research');
   for (const candidate of selected) {
+    if (Date.now() - researchStarted > RESEARCH_TIME_BUDGET_MS) {
+      activity('audit', 'Research time budget for this cycle used; the rest continue next cycle');
+      break;
+    }
     const b = candidate.business;
     const label = b.name ?? `business #${b.id}`;
     try {
@@ -1164,11 +1229,14 @@ async function auditAndDraft() {
         const htmlPages = [{ url: home.url, $: load(await limitedText(home.response, 1_000_000, { truncate: true })) }];
         const homePage = htmlPages[0]!;
         const hostname = new URL(home.url).hostname;
-        const contactLinks = homePage.$('a[href]').toArray()
+        const linkedPages = homePage.$('a[href]').toArray()
           .map((element) => homePage.$(element).attr('href'))
           .filter((href): href is string => Boolean(href))
-          .filter((href) => /contact|about|team/i.test(href))
-          .slice(0, 3);
+          .filter((href) => /contact|about|team|reach|location|book/i.test(href));
+        // Common paths are probed too, because many sites hide contact links in scripts or menus.
+        const contactLinks = [...new Set([...linkedPages, '/contact', '/contact-us', '/about'].map((href) => {
+          try { return new URL(href, home.url).pathname; } catch { return ''; }
+        }))].filter((path) => path && path !== new URL(home.url).pathname).slice(0, 4);
         if (contactLinks.length) activity('audit', `Reading ${contactLinks.length} contact/about ${contactLinks.length === 1 ? 'page' : 'pages'} on ${hostname}`);
         for (const href of contactLinks) {
           try {
@@ -1240,7 +1308,7 @@ async function auditAndDraft() {
           const mailto = page.$('a[href^="mailto:"]').toArray()
             .map((element) => page.$(element).attr('href')?.slice(7).split(/[?;]/, 1)[0] ?? '');
           const textEmails = page.$.root().text().match(EMAIL) ?? [];
-          for (const email of [...mailto, ...textEmails]) {
+          for (const email of [...mailto, ...textEmails, ...hiddenEmails(page.$)]) {
             const normalized = normalizeContactEmail(email);
             if (normalized) foundEmails.set(normalized, page.url);
           }
@@ -1262,7 +1330,9 @@ async function auditAndDraft() {
             break;
           }
         }
-        if (env.PAGESPEED_API_KEY && findings.length > 0) {
+        // PageSpeed runs for every lead we can actually email: slow mobile pages are the most common real problem,
+        // and the basic HTML checks alone missed them on otherwise modern sites.
+        if (env.PAGESPEED_API_KEY && contact?.email) {
           try {
             activity('audit', `Running a Google PageSpeed mobile audit on ${hostname} (this takes 10-30 seconds)`);
             const pageSpeed = await pageSpeedScores(home.url);

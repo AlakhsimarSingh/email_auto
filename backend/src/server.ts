@@ -23,6 +23,8 @@ import {
 } from './notifications.js';
 import { getEffectiveDailyCap, getWarmupState } from './warmup.js';
 import { activitySnapshot, loadActivity } from './activity.js';
+import { importBusinesses, importTargets, parseImportBatch } from './imports.js';
+import { NICHE_PRESETS, nichePreset } from './niches.js';
 import { registerBrainRoutes } from './brain-routes.js';
 import { registerAnalyticsExtraRoutes } from './analytics-extra.js';
 import { autoApproveSignal, recordDraftEdit } from './brain.js';
@@ -35,6 +37,25 @@ app.addContentTypeParser('application/x-www-form-urlencoded', { parseAs: 'string
 });
 await registerAuthRoutes(app);
 const t0 = Date.now();
+
+/** Settings → Targeting: available business types, the active selection, and cities. */
+async function targetingState() {
+  const [campaigns, markets] = await Promise.all([
+    prisma.campaign.findMany({ where: { active: true }, select: { niche: true, city: true, country: true } }),
+    prisma.market.findMany({ where: { enabled: true }, select: { code: true, name: true }, orderBy: { name: 'asc' } }),
+  ]);
+  const cities = new Map<string, { city: string; country: string }>();
+  for (const campaign of campaigns) {
+    if (campaign.city && campaign.country) cities.set(`${campaign.country}:${campaign.city.toLowerCase()}`, { city: campaign.city, country: campaign.country });
+  }
+  return {
+    presets: NICHE_PRESETS.map(({ id, label, group }) => ({ id, label, group })),
+    selected: [...new Set(campaigns.flatMap((campaign) => nichePreset(campaign.niche) ? [campaign.niche!] : []))],
+    legacy: campaigns.filter((campaign) => !nichePreset(campaign.niche)).map((campaign) => `${campaign.niche} – ${campaign.city}`),
+    cities: [...cities.values()],
+    markets,
+  };
+}
 const safeEq = (a: string, b: string) => a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b));
 
 // public: no DB, no data (UptimeRobot keep-alive). Fastify serves HEAD automatically.
@@ -96,6 +117,22 @@ app.post('/internal/tick', async (req, reply) => {
   if (!safeEq(String(req.headers['x-tick-key'] ?? ''), env.TICK_SECRET)) return reply.code(401).send();
   runTick().catch((e) => app.log.error(e));
   return reply.code(202).send({ accepted: true });
+});
+
+// Open-data importer (GitHub Actions): which cities/categories to fetch, and where to push results.
+app.get('/internal/import/targets', async (req, reply) => {
+  if (!safeEq(String(req.headers['x-tick-key'] ?? ''), env.TICK_SECRET)) return reply.code(401).send();
+  return importTargets();
+});
+app.post('/internal/import', async (req, reply) => {
+  if (!safeEq(String(req.headers['x-tick-key'] ?? ''), env.TICK_SECRET)) return reply.code(401).send();
+  let batch;
+  try {
+    batch = parseImportBatch(req.body);
+  } catch (error) {
+    return reply.code(400).send({ error: 'invalid_import', message: error instanceof Error ? error.message : 'Invalid import batch' });
+  }
+  return importBusinesses(batch);
 });
 
 // authenticated API
@@ -768,6 +805,34 @@ app.register(async (r) => {
         },
       },
     }));
+  r.get('/settings/targeting', { preHandler: requireOwner }, async () => targetingState());
+  r.put('/settings/targeting', { preHandler: requireOwner }, async (request, reply) => {
+    const body = request.body as { niches?: unknown; cities?: unknown } | null;
+    const enabled = new Set((await prisma.market.findMany({ where: { enabled: true }, select: { code: true } })).map((market) => market.code));
+    const niches = Array.isArray(body?.niches) ? [...new Set(body.niches.filter((id): id is string => typeof id === 'string' && !!nichePreset(id)))] : [];
+    const cities = Array.isArray(body?.cities) ? body.cities.flatMap((raw) => {
+      const item = raw as { city?: unknown; country?: unknown } | null;
+      const city = typeof item?.city === 'string' ? item.city.trim() : '';
+      const country = typeof item?.country === 'string' ? item.country.trim().toUpperCase() : '';
+      return city && city.length <= 80 && /^[\p{L} .'-]+$/u.test(city) && enabled.has(country) ? [{ city, country }] : [];
+    }) : [];
+    if (!niches.length || !cities.length || cities.length > 10) {
+      return reply.code(400).send({ error: 'invalid_targeting', message: 'Choose at least one business type and 1–10 cities in enabled markets.' });
+    }
+    const keep: number[] = [];
+    for (const { city, country } of cities) {
+      for (const id of niches) {
+        const preset = nichePreset(id)!;
+        const existing = await prisma.campaign.findFirst({ where: { niche: id, city: { equals: city, mode: 'insensitive' }, country }, select: { id: true } });
+        const data = { name: `${preset.label} – ${city}`, niche: id, city, country, osmFilter: preset.osm, active: true };
+        keep.push(existing ? (await prisma.campaign.update({ where: { id: existing.id }, data, select: { id: true } })).id
+          : (await prisma.campaign.create({ data, select: { id: true } })).id);
+      }
+    }
+    await prisma.campaign.updateMany({ where: { id: { notIn: keep } }, data: { active: false } });
+    await prisma.auditLog.create({ data: { actorEmail: request.auth!.email, action: 'settings.targeting_updated', meta: { niches, cities } } });
+    return targetingState();
+  });
   r.get('/settings/portfolio', { preHandler: requireOwner }, getPortfolioSettings);
   r.put('/settings/portfolio', { preHandler: [requireOwner, requireStepUp] }, async (request, reply) => {
     let settings;

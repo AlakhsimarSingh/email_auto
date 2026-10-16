@@ -3,6 +3,7 @@
 import Script from 'next/script';
 import { useCallback, useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
+import TargetingPanel from './targeting-panel';
 
 type Admin = { id: number; email: string; role: string; activeSessions: number };
 type SendPlan = {
@@ -236,6 +237,7 @@ export default function SettingsPage() {
 
         {!error.includes('Only the workspace owner') && (
           <>
+            <TargetingPanel />
             <section className="admin-panel" id="portfolio">
               <div className="admin-panel-heading">
                 <div>

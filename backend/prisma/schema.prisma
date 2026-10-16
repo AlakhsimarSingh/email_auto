@@ -9,19 +9,19 @@ datasource db {
 }
 
 model AdminUser {
-  id         Int                 @id @default(autoincrement())
-  email      String              @unique
-  role       String              @default("admin")
-  googleSub  String?             @unique @map("google_sub")
-  addedBy    String?             @map("added_by")
-  createdAt  DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
-  sessions   AuthSession[]
-  passkeys   PasskeyCredential[]
-  challenges PasskeyChallenge[]
-  pushDevices PushDevice[]
-  notificationChannels NotificationChannel[]
+  id                     Int                     @id @default(autoincrement())
+  email                  String                  @unique
+  role                   String                  @default("admin")
+  googleSub              String?                 @unique @map("google_sub")
+  addedBy                String?                 @map("added_by")
+  createdAt              DateTime                @default(now()) @map("created_at") @db.Timestamptz(6)
+  sessions               AuthSession[]
+  passkeys               PasskeyCredential[]
+  challenges             PasskeyChallenge[]
+  pushDevices            PushDevice[]
+  notificationChannels   NotificationChannel[]
   notificationLinkTokens NotificationLinkToken[]
-  seedTests SeedTestRecord[]
+  seedTests              SeedTestRecord[]
 
   @@map("admin_users")
 }
@@ -53,15 +53,15 @@ model AuthOtpRequest {
 }
 
 model AuthSession {
-  id          String    @id @db.Uuid
-  adminUserId Int       @map("admin_id")
-  deviceLabel String    @map("device_label")
-  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
-  lastSeenAt  DateTime  @default(now()) @map("last_seen_at") @db.Timestamptz(6)
-  expiresAt   DateTime  @map("expires_at") @db.Timestamptz(6)
-  revokedAt   DateTime? @map("revoked_at") @db.Timestamptz(6)
-  stepUpUntil DateTime? @map("step_up_until") @db.Timestamptz(6)
-  adminUser   AdminUser @relation(fields: [adminUserId], references: [id], onDelete: Cascade)
+  id          String       @id @db.Uuid
+  adminUserId Int          @map("admin_id")
+  deviceLabel String       @map("device_label")
+  createdAt   DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  lastSeenAt  DateTime     @default(now()) @map("last_seen_at") @db.Timestamptz(6)
+  expiresAt   DateTime     @map("expires_at") @db.Timestamptz(6)
+  revokedAt   DateTime?    @map("revoked_at") @db.Timestamptz(6)
+  stepUpUntil DateTime?    @map("step_up_until") @db.Timestamptz(6)
+  adminUser   AdminUser    @relation(fields: [adminUserId], references: [id], onDelete: Cascade)
   pushDevices PushDevice[]
 
   @@index([adminUserId, revokedAt])
@@ -103,29 +103,29 @@ model PasskeyChallenge {
 }
 
 model PushDevice {
-  id          String      @id @default(uuid()) @db.Uuid
-  adminUserId Int         @map("admin_id")
-  sessionId   String      @map("session_id") @db.Uuid
-  label       String
-  endpoint    String      @unique
-  p256dh      String
-  auth        String
-  enabled     Boolean     @default(true)
-  isPrimary   Boolean     @default(false) @map("is_primary")
-  muted       Boolean     @default(false)
-  quietStart  String?     @map("quiet_start")
-  quietEnd    String?     @map("quiet_end")
-  notifyReplies Boolean   @default(true) @map("notify_replies")
-  notifyPlans Boolean     @default(true) @map("notify_plans")
-  notifyDigest Boolean    @default(true) @map("notify_digest")
-  digestFrequency String  @default("daily") @map("digest_frequency")
-  lastSeenAt  DateTime    @default(now()) @map("last_seen_at") @db.Timestamptz(6)
-  lastTestAt  DateTime?   @map("last_test_at") @db.Timestamptz(6)
-  createdAt   DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt   DateTime    @updatedAt @map("updated_at") @db.Timestamptz(6)
-  adminUser   AdminUser   @relation(fields: [adminUserId], references: [id], onDelete: Cascade)
-  session     AuthSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
-  deliveries  NotificationDelivery[]
+  id              String                 @id @default(uuid()) @db.Uuid
+  adminUserId     Int                    @map("admin_id")
+  sessionId       String                 @map("session_id") @db.Uuid
+  label           String
+  endpoint        String                 @unique
+  p256dh          String
+  auth            String
+  enabled         Boolean                @default(true)
+  isPrimary       Boolean                @default(false) @map("is_primary")
+  muted           Boolean                @default(false)
+  quietStart      String?                @map("quiet_start")
+  quietEnd        String?                @map("quiet_end")
+  notifyReplies   Boolean                @default(true) @map("notify_replies")
+  notifyPlans     Boolean                @default(true) @map("notify_plans")
+  notifyDigest    Boolean                @default(true) @map("notify_digest")
+  digestFrequency String                 @default("daily") @map("digest_frequency")
+  lastSeenAt      DateTime               @default(now()) @map("last_seen_at") @db.Timestamptz(6)
+  lastTestAt      DateTime?              @map("last_test_at") @db.Timestamptz(6)
+  createdAt       DateTime               @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime               @updatedAt @map("updated_at") @db.Timestamptz(6)
+  adminUser       AdminUser              @relation(fields: [adminUserId], references: [id], onDelete: Cascade)
+  session         AuthSession            @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  deliveries      NotificationDelivery[]
 
   @@index([adminUserId, enabled])
   @@index([sessionId])
@@ -133,27 +133,27 @@ model PushDevice {
 }
 
 model NotificationChannel {
-  id                  String                  @id @default(uuid()) @db.Uuid
-  adminUserId         Int                     @map("admin_id")
-  type                String
-  label               String
-  targetHash          String                  @map("target_hash")
-  targetCiphertext    Bytes                   @map("target_ciphertext")
-  targetIv            Bytes                   @map("target_iv")
-  targetAuthTag       Bytes                   @map("target_auth_tag")
-  enabled             Boolean                 @default(true)
-  isPrimary           Boolean                 @default(false) @map("is_primary")
-  muted               Boolean                 @default(false)
-  quietStart          String?                 @map("quiet_start")
-  quietEnd            String?                 @map("quiet_end")
-  notifyReplies       Boolean                 @default(true) @map("notify_replies")
-  notifyPlans         Boolean                 @default(true) @map("notify_plans")
-  notifyDigest        Boolean                 @default(true) @map("notify_digest")
-  digestFrequency     String                  @default("daily") @map("digest_frequency")
-  createdAt           DateTime                @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt           DateTime                @updatedAt @map("updated_at") @db.Timestamptz(6)
-  adminUser           AdminUser               @relation(fields: [adminUserId], references: [id], onDelete: Cascade)
-  deliveries          NotificationDelivery[]
+  id               String                 @id @default(uuid()) @db.Uuid
+  adminUserId      Int                    @map("admin_id")
+  type             String
+  label            String
+  targetHash       String                 @map("target_hash")
+  targetCiphertext Bytes                  @map("target_ciphertext")
+  targetIv         Bytes                  @map("target_iv")
+  targetAuthTag    Bytes                  @map("target_auth_tag")
+  enabled          Boolean                @default(true)
+  isPrimary        Boolean                @default(false) @map("is_primary")
+  muted            Boolean                @default(false)
+  quietStart       String?                @map("quiet_start")
+  quietEnd         String?                @map("quiet_end")
+  notifyReplies    Boolean                @default(true) @map("notify_replies")
+  notifyPlans      Boolean                @default(true) @map("notify_plans")
+  notifyDigest     Boolean                @default(true) @map("notify_digest")
+  digestFrequency  String                 @default("daily") @map("digest_frequency")
+  createdAt        DateTime               @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime               @updatedAt @map("updated_at") @db.Timestamptz(6)
+  adminUser        AdminUser              @relation(fields: [adminUserId], references: [id], onDelete: Cascade)
+  deliveries       NotificationDelivery[]
 
   @@unique([adminUserId, type, targetHash])
   @@index([adminUserId, enabled])
@@ -174,17 +174,17 @@ model NotificationLinkToken {
 }
 
 model WorkspaceNotification {
-  id             String                  @id @default(uuid()) @db.Uuid
-  eventKey       String                  @unique @map("event_key")
+  id             String                 @id @default(uuid()) @db.Uuid
+  eventKey       String                 @unique @map("event_key")
   priority       Int
   title          String
   body           String
-  eventType      String                  @map("event_type")
+  eventType      String                 @map("event_type")
   url            String
-  createdAt      DateTime                @default(now()) @map("created_at") @db.Timestamptz(6)
-  acknowledgedAt DateTime?               @map("acknowledged_at") @db.Timestamptz(6)
-  acknowledgedBy String?                 @map("acknowledged_by")
-  escalatedAt    DateTime?               @map("escalated_at") @db.Timestamptz(6)
+  createdAt      DateTime               @default(now()) @map("created_at") @db.Timestamptz(6)
+  acknowledgedAt DateTime?              @map("acknowledged_at") @db.Timestamptz(6)
+  acknowledgedBy String?                @map("acknowledged_by")
+  escalatedAt    DateTime?              @map("escalated_at") @db.Timestamptz(6)
   deliveries     NotificationDelivery[]
 
   @@index([priority, acknowledgedAt, createdAt])
@@ -192,34 +192,34 @@ model WorkspaceNotification {
 }
 
 model NotificationDelivery {
-  id                 String                 @id @default(uuid()) @db.Uuid
-  idempotencyKey     String                 @unique @map("idempotency_key")
-  notificationId     String                 @map("notification_id") @db.Uuid
-  deviceId           String?                @map("device_id") @db.Uuid
-  channelId          String?                @map("channel_id") @db.Uuid
-  status             String                 @default("pending")
-  attempts           Int                    @default(0)
-  externalMessageId  String?                @map("external_message_id")
-  lastError          String?                @map("last_error")
-  lastAttemptAt      DateTime?              @map("last_attempt_at") @db.Timestamptz(6)
-  createdAt          DateTime               @default(now()) @map("created_at") @db.Timestamptz(6)
-  sentAt             DateTime?              @map("sent_at") @db.Timestamptz(6)
-  notification       WorkspaceNotification  @relation(fields: [notificationId], references: [id], onDelete: Cascade)
-  device             PushDevice?            @relation(fields: [deviceId], references: [id], onDelete: Cascade)
-  channel            NotificationChannel?    @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  id                String                @id @default(uuid()) @db.Uuid
+  idempotencyKey    String                @unique @map("idempotency_key")
+  notificationId    String                @map("notification_id") @db.Uuid
+  deviceId          String?               @map("device_id") @db.Uuid
+  channelId         String?               @map("channel_id") @db.Uuid
+  status            String                @default("pending")
+  attempts          Int                   @default(0)
+  externalMessageId String?               @map("external_message_id")
+  lastError         String?               @map("last_error")
+  lastAttemptAt     DateTime?             @map("last_attempt_at") @db.Timestamptz(6)
+  createdAt         DateTime              @default(now()) @map("created_at") @db.Timestamptz(6)
+  sentAt            DateTime?             @map("sent_at") @db.Timestamptz(6)
+  notification      WorkspaceNotification @relation(fields: [notificationId], references: [id], onDelete: Cascade)
+  device            PushDevice?           @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  channel           NotificationChannel?  @relation(fields: [channelId], references: [id], onDelete: Cascade)
 
   @@index([notificationId, status])
   @@map("notification_deliveries")
 }
 
 model SeedTestRecord {
-  id             String    @id @default(uuid()) @db.Uuid
-  adminUserId    Int       @map("admin_id")
-  emailHash      String    @map("email_hash")
-  mailboxProvider String   @map("mailbox_provider")
-  placement      String
-  testedAt       DateTime  @default(now()) @map("tested_at") @db.Timestamptz(6)
-  adminUser      AdminUser @relation(fields: [adminUserId], references: [id], onDelete: Cascade)
+  id              String    @id @default(uuid()) @db.Uuid
+  adminUserId     Int       @map("admin_id")
+  emailHash       String    @map("email_hash")
+  mailboxProvider String    @map("mailbox_provider")
+  placement       String
+  testedAt        DateTime  @default(now()) @map("tested_at") @db.Timestamptz(6)
+  adminUser       AdminUser @relation(fields: [adminUserId], references: [id], onDelete: Cascade)
 
   @@index([adminUserId, testedAt])
   @@index([testedAt])
@@ -270,31 +270,32 @@ model AuditLog {
 }
 
 model Campaign {
-  id        Int      @id @default(autoincrement())
-  name      String?
-  niche     String?
-  city      String?
-  country   String?
-  osmFilter String   @map("osm_filter")
-  active    Boolean? @default(true)
+  id             Int       @id @default(autoincrement())
+  name           String?
+  niche          String?
+  city           String?
+  country        String?
+  osmFilter      String    @map("osm_filter")
+  active         Boolean?  @default(true)
+  lastSearchedAt DateTime? @map("last_searched_at") @db.Timestamptz(6)
 
   @@map("campaigns")
 }
 
 model Market {
-  code                    String   @id @db.VarChar(2)
-  name                    String
-  enabled                 Boolean  @default(false)
-  clientValueScore        Int      @default(50) @map("client_value_score")
-  leadSupplyScore         Int      @default(50) @map("lead_supply_score")
-  emailYieldScore         Int      @default(50) @map("email_yield_score")
-  responseScore           Int      @default(50) @map("response_score")
-  communicationFitScore   Int      @default(50) @map("communication_fit_score")
-  compliancePenalty       Int      @default(5) @map("compliance_penalty")
-  gdpPppPerCapita          Float?   @map("gdp_ppp_per_capita")
-  gdpReferenceYear         Int?     @map("gdp_reference_year")
-  gdpUpdatedAt             DateTime? @map("gdp_updated_at") @db.Timestamptz(6)
-  updatedAt                DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  code                  String    @id @db.VarChar(2)
+  name                  String
+  enabled               Boolean   @default(false)
+  clientValueScore      Int       @default(50) @map("client_value_score")
+  leadSupplyScore       Int       @default(50) @map("lead_supply_score")
+  emailYieldScore       Int       @default(50) @map("email_yield_score")
+  responseScore         Int       @default(50) @map("response_score")
+  communicationFitScore Int       @default(50) @map("communication_fit_score")
+  compliancePenalty     Int       @default(5) @map("compliance_penalty")
+  gdpPppPerCapita       Float?    @map("gdp_ppp_per_capita")
+  gdpReferenceYear      Int?      @map("gdp_reference_year")
+  gdpUpdatedAt          DateTime? @map("gdp_updated_at") @db.Timestamptz(6)
+  updatedAt             DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   @@map("markets")
 }
@@ -312,32 +313,32 @@ model CityGeoCache {
 }
 
 model Business {
-  id         Int       @id @default(autoincrement())
-  osmId      String?   @unique @map("osm_id")
-  name       String?
-  niche      String?
-  city       String?
-  country    String?
-  websiteUrl String?   @map("website_url")
-  track      String    @default("site")
-  phone      String?
-  latitude   Float?
-  longitude  Float?
-  timezone   String?
-  socialOnly Boolean   @default(false) @map("social_only")
-  score      Int?
-  scoreSignals Json?   @map("score_signals") @db.JsonB
-  osmTags    Json?     @map("osm_tags") @db.JsonB
-  callScript String?   @map("call_script")
-  auditedAt  DateTime? @map("audited_at") @db.Timestamptz(6)
-  screenshot Bytes?
+  id                  Int       @id @default(autoincrement())
+  osmId               String?   @unique @map("osm_id")
+  name                String?
+  niche               String?
+  city                String?
+  country             String?
+  websiteUrl          String?   @map("website_url")
+  track               String    @default("site")
+  phone               String?
+  latitude            Float?
+  longitude           Float?
+  timezone            String?
+  socialOnly          Boolean   @default(false) @map("social_only")
+  score               Int?
+  scoreSignals        Json?     @map("score_signals") @db.JsonB
+  osmTags             Json?     @map("osm_tags") @db.JsonB
+  callScript          String?   @map("call_script")
+  auditedAt           DateTime? @map("audited_at") @db.Timestamptz(6)
+  screenshot          Bytes?
   screenshotExpiresAt DateTime? @map("screenshot_expires_at") @db.Timestamptz(6)
-  status     String?   @default("new")
-  findings   Json?     @db.JsonB
-  createdAt  DateTime? @default(now()) @map("created_at") @db.Timestamptz(6)
-  contacts   Contact[]
-  emails     Email[]
-  deal       Deal?
+  status              String?   @default("new")
+  findings            Json?     @db.JsonB
+  createdAt           DateTime? @default(now()) @map("created_at") @db.Timestamptz(6)
+  contacts            Contact[]
+  emails              Email[]
+  deal                Deal?
 
   @@map("businesses")
 }
@@ -355,66 +356,66 @@ model Contact {
 }
 
 model Email {
-  id             Int       @id @default(autoincrement())
-  businessId     Int?      @map("business_id")
-  contactId      Int?      @map("contact_id")
-  subject        String?
-  origSubject    String?   @map("orig_subject")
-  body           String?
-  origBody       String?   @map("orig_body")
-  manualRequired Boolean   @default(false) @map("manual_required")
-  draftAngle     String?   @map("draft_angle")
-  portfolioProject String? @map("portfolio_project")
-  draftConfidence Float?   @map("draft_confidence")
-  status         String?   @default("drafted")
-  holdUntil      DateTime? @map("hold_until") @db.Timestamptz(6)
-  scheduledFor   DateTime? @map("scheduled_for") @db.Timestamptz(6)
-  sentAt         DateTime? @map("sent_at") @db.Timestamptz(6)
-  gmailMessageId String?   @map("gmail_message_id")
-  gmailThreadId  String?   @map("gmail_thread_id")
-  rfcMessageId   String?   @map("rfc_message_id")
-  sequenceStep   Int       @default(0) @map("sequence_step")
-  followUpDueAt  DateTime? @map("follow_up_due_at") @db.Timestamptz(6)
-  error          String?
-  learnedAt      DateTime? @map("learned_at") @db.Timestamptz(6)
-  learnOutcome   String?   @map("learn_outcome")
-  selectionInfo  Json?     @map("selection_info") @db.JsonB
-  createdAt      DateTime? @default(now()) @map("created_at") @db.Timestamptz(6)
-  business       Business? @relation(fields: [businessId], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  contact        Contact?  @relation(fields: [contactId], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  sendPlanItems  SendPlanItem[]
-  replyRecords   ReplyRecord[]
-  draftEdit      DraftEdit?
+  id               Int            @id @default(autoincrement())
+  businessId       Int?           @map("business_id")
+  contactId        Int?           @map("contact_id")
+  subject          String?
+  origSubject      String?        @map("orig_subject")
+  body             String?
+  origBody         String?        @map("orig_body")
+  manualRequired   Boolean        @default(false) @map("manual_required")
+  draftAngle       String?        @map("draft_angle")
+  portfolioProject String?        @map("portfolio_project")
+  draftConfidence  Float?         @map("draft_confidence")
+  status           String?        @default("drafted")
+  holdUntil        DateTime?      @map("hold_until") @db.Timestamptz(6)
+  scheduledFor     DateTime?      @map("scheduled_for") @db.Timestamptz(6)
+  sentAt           DateTime?      @map("sent_at") @db.Timestamptz(6)
+  gmailMessageId   String?        @map("gmail_message_id")
+  gmailThreadId    String?        @map("gmail_thread_id")
+  rfcMessageId     String?        @map("rfc_message_id")
+  sequenceStep     Int            @default(0) @map("sequence_step")
+  followUpDueAt    DateTime?      @map("follow_up_due_at") @db.Timestamptz(6)
+  error            String?
+  learnedAt        DateTime?      @map("learned_at") @db.Timestamptz(6)
+  learnOutcome     String?        @map("learn_outcome")
+  selectionInfo    Json?          @map("selection_info") @db.JsonB
+  createdAt        DateTime?      @default(now()) @map("created_at") @db.Timestamptz(6)
+  business         Business?      @relation(fields: [businessId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  contact          Contact?       @relation(fields: [contactId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  sendPlanItems    SendPlanItem[]
+  replyRecords     ReplyRecord[]
+  draftEdit        DraftEdit?
 
   @@map("emails")
 }
 
 model Deal {
-  id          Int      @id @default(autoincrement())
-  businessId  Int      @unique @map("business_id")
-  stage       String   @default("replied")
-  valueCents  Int      @default(0) @map("value_cents")
-  currency    String   @default("USD") @db.VarChar(3)
-  notes       String?
-  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
-  business    Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  id         Int      @id @default(autoincrement())
+  businessId Int      @unique @map("business_id")
+  stage      String   @default("replied")
+  valueCents Int      @default(0) @map("value_cents")
+  currency   String   @default("USD") @db.VarChar(3)
+  notes      String?
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt  DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
 
   @@index([stage, updatedAt])
   @@map("deals")
 }
 
 model SendPlan {
-  id           String         @id @db.Uuid
-  state        String         @default("draft")
-  announcedAt  DateTime?      @map("announced_at") @db.Timestamptz(6)
-  startsAt     DateTime       @map("starts_at") @db.Timestamptz(6)
-  endsAt       DateTime       @map("ends_at") @db.Timestamptz(6)
-  vetoedAt     DateTime?      @map("vetoed_at") @db.Timestamptz(6)
-  frozenAt     DateTime?      @map("frozen_at") @db.Timestamptz(6)
-  createdBy    String         @map("created_by")
-  createdAt    DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
-  items        SendPlanItem[]
+  id          String         @id @db.Uuid
+  state       String         @default("draft")
+  announcedAt DateTime?      @map("announced_at") @db.Timestamptz(6)
+  startsAt    DateTime       @map("starts_at") @db.Timestamptz(6)
+  endsAt      DateTime       @map("ends_at") @db.Timestamptz(6)
+  vetoedAt    DateTime?      @map("vetoed_at") @db.Timestamptz(6)
+  frozenAt    DateTime?      @map("frozen_at") @db.Timestamptz(6)
+  createdBy   String         @map("created_by")
+  createdAt   DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  items       SendPlanItem[]
 
   @@index([state, startsAt, endsAt])
   @@map("send_plans")
@@ -434,10 +435,10 @@ model SendPlanItem {
 }
 
 model GmailSyncState {
-  id               Int      @id
-  historyId        String?  @map("history_id")
-  lastPolledAt     DateTime? @map("last_polled_at") @db.Timestamptz(6)
-  updatedAt        DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  id           Int       @id
+  historyId    String?   @map("history_id")
+  lastPolledAt DateTime? @map("last_polled_at") @db.Timestamptz(6)
+  updatedAt    DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   @@map("gmail_sync_state")
 }
@@ -468,9 +469,9 @@ model Suppression {
 }
 
 model UnsubscribeToken {
-  tokenHash String    @id @map("token_hash")
+  tokenHash String   @id @map("token_hash")
   email     String
-  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
   @@index([email])
   @@map("unsubscribe_tokens")
@@ -494,9 +495,9 @@ model ContactLedger {
 }
 
 model DomainLock {
-  domain     String   @id
-  businessId Int?     @map("business_id")
-  lastSentAt DateTime @map("last_sent_at") @db.Timestamptz(6)
+  domain      String   @id
+  businessId  Int?     @map("business_id")
+  lastSentAt  DateTime @map("last_sent_at") @db.Timestamptz(6)
   lockedUntil DateTime @map("locked_until") @db.Timestamptz(6)
 
   @@index([lockedUntil])

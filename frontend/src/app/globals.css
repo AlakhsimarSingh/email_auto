@@ -654,6 +654,24 @@ h3 { margin-bottom: 0; font-size: 16px; font-weight: 600; }
 .device-row { display: grid; justify-content: stretch; gap: 10px; }
 .save-quiet-hours { justify-self: start; }
 
+/* Targeting (Settings) */
+.targeting-form { display: grid; gap: 12px; margin-top: 16px; }
+.targeting-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-top: 6px; }
+.targeting-heading strong { font-size: 16px; }
+.targeting-heading small { color: var(--label-2); font-size: 13px; }
+.targeting-heading .text-button { margin: 0; }
+.targeting-group { display: grid; gap: 7px; }
+.targeting-group-title { color: var(--label-2); font-size: 12px; font-weight: 600; letter-spacing: .03em; text-transform: uppercase; }
+.chip-row { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip { display: inline-flex; min-height: 34px; align-items: center; gap: 4px; border: 0; border-radius: 999px; background: var(--fill); color: var(--label); padding: 0 14px; font-size: 14px; font-weight: 500; transition: background .15s, color .15s; }
+.chip:hover { background: var(--fill-strong); }
+.chip.on { background: color-mix(in srgb, var(--tint) 15%, transparent); color: var(--tint); font-weight: 600; }
+.chip.removable { padding-right: 6px; }
+.chip.removable button { display: grid; width: 24px; height: 24px; place-items: center; border: 0; border-radius: 50%; background: color-mix(in srgb, var(--tint) 18%, transparent); color: var(--tint); font-size: 16px; line-height: 1; }
+.targeting-add { display: grid; grid-template-columns: minmax(0, 1fr) 90px auto; gap: 8px; }
+.targeting-form > .approve-button { justify-self: start; margin-top: 4px; }
+@media (max-width: 480px) { .targeting-add { grid-template-columns: minmax(0, 1fr) 80px; } .targeting-add .reject-button { grid-column: 1 / -1; } .targeting-form > .approve-button { justify-self: stretch; } }
+
 /* --------------------------------------------------------------------------
    Brain (learning agent)
    -------------------------------------------------------------------------- */

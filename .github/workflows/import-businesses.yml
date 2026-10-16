@@ -1,0 +1,37 @@
+name: Import businesses (Overture Maps)
+
+# Weekly open-data import into the lead pool. Uses the same secrets as the tick backup pinger.
+# Run it manually (Actions → this workflow → Run workflow) right after changing Settings → Targeting.
+on:
+  schedule:
+    - cron: '0 3 * * 1'
+  workflow_dispatch:
+    inputs:
+      max_per_city:
+        description: Maximum businesses to fetch per city
+        default: '1500'
+
+permissions:
+  contents: read
+
+jobs:
+  import:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: tools/importer
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: tools/importer/package-lock.json
+      - run: npm ci
+      - name: Import from Overture Maps
+        env:
+          BACKEND_PUBLIC_URL: ${{ secrets.BACKEND_PUBLIC_URL }}
+          TICK_SECRET: ${{ secrets.TICK_SECRET }}
+          MAX_PER_CITY: ${{ github.event.inputs.max_per_city || '1500' }}
+        run: node import-overture.mjs

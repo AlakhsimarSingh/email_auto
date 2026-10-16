@@ -1,0 +1,9 @@
+{
+  "name": "outreach-importer",
+  "private": true,
+  "type": "module",
+  "description": "Weekly Overture Maps import into the outreach lead pool (runs in GitHub Actions)",
+  "scripts": { "start": "node import-overture.mjs" },
+  "engines": { "node": ">=22" },
+  "dependencies": { "@duckdb/node-api": "1.4.1-r.4" }
+}
