@@ -28,3 +28,9 @@ test('draft checks explain exactly what is wrong in plain English', () => {
   assert.ok(problems.some((problem) => /pushy wording/.test(problem)));
   assert.ok(problems.some((problem) => /link other than your portfolio/.test(problem)));
 });
+
+test('all-caps subject lines are flagged as spammy', () => {
+  const body = 'Hi Neo Plus team, '.concat('word '.repeat(80));
+  assert.ok(draftProblems({ subject: 'WEBSITE SUGGESTION - Improve bookings', body: `${body} Neo Plus` }, 'Neo Plus', [], []).some((problem) => /ALL CAPS/.test(problem)));
+  assert.ok(!draftProblems({ subject: 'A quick win for Neo Plus', body: `${body} Neo Plus` }, 'Neo Plus', [], []).some((problem) => /ALL CAPS/.test(problem)));
+});

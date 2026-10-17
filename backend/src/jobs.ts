@@ -19,7 +19,7 @@ import { lookupCompaniesHouse } from './companies-house.js';
 import { recordPageSpeedCall } from './usage-meter.js';
 import { activity, runStage, tickFinished, tickStarted } from './activity.js';
 import { nicheNoun } from './niches.js';
-import { contactSearchConfigured, searchContact } from './contact-search.js';
+import { contactSearchConfigured, isPlaceholderEmail, searchContact } from './contact-search.js';
 import { refreshAutoTargeting } from './targeting.js';
 import { chooseAngle, chooseCandidates, chooseSubjectStyle, getDraftingMemory, runBrainCycle } from './brain.js';
 import { containsBannedPhrase, STYLE_HINTS, type SubjectStyle } from './brain-math.js';
@@ -106,6 +106,9 @@ export function draftProblems(value: { subject: string; body: string }, business
   const body = value.body.trim();
   const words = body.split(/\s+/).filter(Boolean).length;
   if (subject.length < 8 || subject.length > 100 || subject.split(/\s+/).length > 12 || /[\r\n]/.test(subject)) problems.push('The subject line is too short, too long or spans several lines');
+  const letters = subject.replace(/[^A-Za-z]/g, '');
+  const capitalWords = subject.split(/\s+/).filter((word) => word.length > 2 && word === word.toUpperCase() && /[A-Z]/.test(word)).length;
+  if ((letters.length >= 6 && letters === letters.toUpperCase()) || capitalWords >= 2) problems.push('The subject line uses ALL CAPS, which looks like spam');
   if (words < 70 || words > 160) problems.push(`The message is ${words} words; it should be 70–160`);
   if (businessName && !body.toLowerCase().includes(businessName.toLowerCase())) problems.push("The message doesn't mention the business by name");
   if (/[<>]/.test(body)) problems.push('The message contains HTML');
@@ -805,7 +808,7 @@ export function normalizeWebsite(value: string) {
 
 export function normalizeContactEmail(value: string | undefined) {
   const email = value?.split(/[;,]/, 1)[0]?.trim().toLowerCase();
-  return email && email.length <= 254 && /^[^\s@]+@[^\s@]+\.[a-z]{2,}$/i.test(email) ? email : null;
+  return email && email.length <= 254 && /^[^\s@]+@[^\s@]+\.[a-z]{2,}$/i.test(email) && !isPlaceholderEmail(email) ? email : null;
 }
 
 export function isPersonalEmail(email: string, country: string | null) {
@@ -1998,6 +2001,11 @@ async function sendDue() {
     return;
   }
   const to = email.contact.email;
+  if (isPlaceholderEmail(to)) {
+    await prisma.email.update({ where: { id: email.id }, data: { status: 'rejected', error: 'placeholder_recipient' } });
+    activity('send', `Cancelled email to ${email.business?.name ?? to}: ${to} is a template placeholder address, not a real contact`, 'warn');
+    return;
+  }
   const recipient = email.business?.name ?? to;
   const isFollowUp = email.sequenceStep > 0 && Boolean(email.gmailThreadId);
   if (isFollowUp && await prisma.replyRecord.findFirst({

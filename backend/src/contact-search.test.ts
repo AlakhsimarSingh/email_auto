@@ -34,3 +34,14 @@ test('monthly budgets are paced per day and stop at the monthly limit', () => {
   assert.equal(withinBudget('hunter', 1, 10, october), true); // 45 / 31 -> 2 per day
   assert.equal(withinBudget('hunter', 2, 10, october), false);
 });
+
+test('template placeholder addresses are rejected, real business addresses are kept', async () => {
+  const { isPlaceholderEmail } = await import('./contact-search.js');
+  for (const fake of ['user@domain.com', 'name@example.com', 'info@yourdomain.com', 'email@company.com', 'john.doe@example.org', 'test@test.com',
+    '605a7baede844d278b89dc95ae0a9123@sentry-next.wixpress.com', 'abc123@o12345.ingest.sentry.io', 'hello@yoursite.com']) {
+    assert.equal(isPlaceholderEmail(fake), true, `${fake} should be treated as a placeholder`);
+  }
+  for (const real of ['cs@jayaimee.com', 'shedsdiscounted@gmail.com', 'info@mapleplumbing.ca', 'me@johnsmith.com', 'user.support@acme.io', 'hello@domainsforsale.net']) {
+    assert.equal(isPlaceholderEmail(real), false, `${real} is a real address`);
+  }
+});

@@ -12,6 +12,16 @@ const EMAIL = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi;
 const FREE_MAIL = /^(gmail|googlemail|outlook|hotmail|live|yahoo|icloud|me|protonmail|proton|aol|msn|gmx|mail|rogers|shaw|telus|sympatico|bell)\./i;
 const ASSET_SUFFIX = /\.(png|jpe?g|gif|webp|svg|css|js)$/i;
 
+const PLACEHOLDER_DOMAINS = /^(example\.(com|org|net)|domain\.(com|net|org)|yourdomain\.\w+|yoursite\.\w+|yourwebsite\.\w+|yourcompany\.\w+|company\.com|website\.com|mysite\.com|mydomain\.\w+|email\.(com|net)|test\.com|sample\.com|placeholder\.\w+|wixpress\.com|sentry\.io|[\w.-]+\.sentry\.io|sentry-next\.wixpress\.com)$/i;
+const PLACEHOLDER_LOCAL = /^(user|username|name|yourname|your\.?name|your\.?email|youremail|email|e-?mail|someone|somebody|john\.?doe|jane\.?doe|johndoe|janedoe|firstname\.?lastname|first\.?last|test|testing|sample|example|demo|placeholder|xxx+|abc|me|you)$/i;
+
+/** Template and demo addresses copied from website themes (e.g. user@domain.com) must never be emailed. */
+export function isPlaceholderEmail(email: string) {
+  const [local = '', domain = ''] = email.toLowerCase().split('@');
+  return PLACEHOLDER_DOMAINS.test(domain) || (PLACEHOLDER_LOCAL.test(local) && /^(domain|example|email|company|website|mail|test)\./.test(domain))
+    || /^[0-9a-f]{24,}$/.test(local); // tracking/error-reporting ids such as Sentry DSNs
+}
+
 export function domainOf(url: string | null | undefined) {
   if (!url) return null;
   try { return new URL(url).hostname.toLowerCase().replace(/^www\./, ''); } catch { return null; }
@@ -29,7 +39,7 @@ export function matchEmails(input: ContactSearchInput, page: { url: string; text
   const pageDomain = domainOf(page.url);
   const raw = page.text.slice(0, 200_000);
   const emails = [...new Set((raw.match(EMAIL) ?? []).map((email) => email.toLowerCase().replace(/\.+$/, '')))]
-    .filter((email) => !ASSET_SUFFIX.test(email) && !/^(noreply|no-reply|donotreply|example|test|privacy|abuse|postmaster)@/i.test(email));
+    .filter((email) => !ASSET_SUFFIX.test(email) && !isPlaceholderEmail(email) && !/^(noreply|no-reply|donotreply|example|test|privacy|abuse|postmaster)@/i.test(email));
   if (ownDomain) {
     return emails.filter((email) => {
       const emailDomain = email.split('@')[1] ?? '';
