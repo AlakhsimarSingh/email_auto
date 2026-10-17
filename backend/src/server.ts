@@ -1291,6 +1291,10 @@ app.register(async (r) => {
       agent_low_risk: signal.eligible && !email.manualRequired && (email.draftConfidence ?? 0) >= 0.8,
       screenshot_data: email.business?.screenshot ? Buffer.from(email.business.screenshot).toString('base64') : null,
       signature_preview: signaturePreview(email.body ?? ''),
+      draft_issues: (() => {
+        const issues = (email.selectionInfo as { draftIssues?: unknown } | null)?.draftIssues;
+        return Array.isArray(issues) ? issues.filter((issue): issue is string => typeof issue === 'string') : [];
+      })(),
     }));
   });
   r.post('/emails/:id/approve', async (req, reply) => {

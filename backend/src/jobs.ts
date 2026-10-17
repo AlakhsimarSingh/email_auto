@@ -52,6 +52,73 @@ const LABEL: Record<string, string> = {
   seo: 'mobile PageSpeed SEO score is low',
 };
 
+/**
+ * Plain-language pitch per finding: what it may cost the business and what I would do about it.
+ * Used by the AI prompt and the fallback template. No jargon and no numbers, so nothing is overclaimed.
+ */
+export const PITCH: Record<string, { problem: string; fix: string }> = {
+  slow_lcp: { problem: 'your website takes a while to load on phones, and mobile visitors often leave before a slow page finishes', fix: 'make it load quickly on phones so more visitors stay and get in touch' },
+  mobile_performance: { problem: 'your website feels slow on phones, which is where many people will find you', fix: 'speed it up on mobile so visitors stick around instead of going back to their search results' },
+  no_booking_link: { problem: "there isn't an obvious way to book or buy straight from your homepage", fix: 'add a clear booking or ordering button so customers can act in a couple of taps, even outside opening hours' },
+  phone_no_booking: { problem: 'right now customers can only reach you by phone, with no way to book or order online', fix: 'set up simple online booking so you can take enquiries around the clock' },
+  no_https: { problem: 'browsers show a "Not secure" warning on your website, which can put customers off', fix: 'set up the secure padlock so visitors feel safe getting in touch' },
+  not_mobile_friendly: { problem: "your website isn't set up to fit phone screens, so it can be awkward to use on mobile", fix: 'make it look and work properly on phones' },
+  missing_meta: { problem: 'your homepage is missing the short summary Google shows under your name in search results', fix: 'write one so your Google listing gives people a reason to click' },
+  old_copyright: { problem: 'the footer still shows an old year, which can make the site look unmaintained', fix: 'freshen it up so it reflects the business you run today' },
+  seo: { problem: 'Google has a harder time understanding your website than it should', fix: 'fix the basics so you show up better when locals search for what you offer' },
+  accessibility: { problem: 'parts of your website are hard to read or use for some visitors', fix: 'make it easier for everyone to read and use' },
+  no_website_listing: { problem: "I couldn't find a website linked from your public listing, so people searching online may not find much about you", fix: 'put together a simple, professional website so customers can find you, see what you offer and get in touch' },
+  social_only: { problem: 'your listing only links to a social-media page, which not every customer uses', fix: 'give you a simple website of your own that works for everyone' },
+};
+
+const possessive = (name: string) => /s$/i.test(name.trim()) ? `${name.trim()}'` : `${name.trim()}'s`;
+
+/** The safe, already-persuasive draft used when AI drafting is unavailable or fails its checks. */
+export function templateDraft(name: string, track: string, findings: string[], sender: string) {
+  const pitches = findings.flatMap((id) => PITCH[id] ? [PITCH[id]!] : []).slice(0, 2);
+  const problems = pitches.map((pitch) => pitch.problem).join(', and ');
+  const fixes = pitches.map((pitch) => pitch.fix).join(', and ');
+  if (track === 'no_site') {
+    return {
+      subject: `Helping ${name} get found online`,
+      body: `Hi ${name} team,\n\n${problems ? `${problems.charAt(0).toUpperCase()}${problems.slice(1)}.` : ''}\n\nI'm a freelance web developer and I help local businesses like yours get online properly. I can ${fixes || 'set you up with a simple website'}. A couple of recent projects are linked below so you can see my work.\n\nWould it help if I sent a short video showing what this could look like for ${name}? It's free, with no obligation.\n\n${sender}`,
+    };
+  }
+  const capitalize = (text: string) => `${text.charAt(0).toUpperCase()}${text.slice(1)}`;
+  // Two problems read better as short points than as one long sentence.
+  const spotted = pitches.length > 1
+    ? `a couple of things that could be costing you customers:\n\n${pitches.map((pitch) => `- ${capitalize(pitch.problem)}.`).join('\n')}`
+    : `something that could be costing you customers: ${problems}.`;
+  return {
+    subject: `A quick win for ${possessive(name)} website`,
+    body: `Hi ${name} team,\n\nI took a look at ${possessive(name)} website and spotted ${spotted}\n\nThis is exactly the kind of thing I fix as a freelance web developer. I can ${fixes}. A couple of recent projects are linked below so you can see my work.\n\nWould it help if I sent a short video showing exactly what I'd change? It's free, with no obligation.\n\n${sender}`,
+  };
+}
+
+/** Plain-English reasons a draft cannot go out as written. Empty means it passed. */
+export function draftProblems(value: { subject: string; body: string }, businessName: string, allowedUrls: string[], banned: string[]) {
+  const problems: string[] = [];
+  const subject = value.subject.trim();
+  const body = value.body.trim();
+  const words = body.split(/\s+/).filter(Boolean).length;
+  if (subject.length < 8 || subject.length > 100 || subject.split(/\s+/).length > 12 || /[\r\n]/.test(subject)) problems.push('The subject line is too short, too long or spans several lines');
+  if (words < 70 || words > 160) problems.push(`The message is ${words} words; it should be 70–160`);
+  if (businessName && !body.toLowerCase().includes(businessName.toLowerCase())) problems.push("The message doesn't mention the business by name");
+  if (/[<>]/.test(body)) problems.push('The message contains HTML');
+  const hype = /\b(guaranteed?|100%|act now|limited time|risk[- ]free|urgent|cheap|best price)\b/i.exec(`${subject} ${body}`);
+  if (hype) problems.push(`It uses pushy wording ("${hype[0]}")`);
+  const jargon = /\b(lcp|largest contentful paint|pagespeed|meta description|viewport|https?\b(?!:)|seo score|lighthouse)\b/i.exec(body.replace(/https?:\/\/\S+/gi, ''));
+  if (jargon) problems.push(`It uses technical jargon ("${jargon[0]}") instead of plain language`);
+  const allowedNumbers = new Set(businessName.match(/\b\d+(?:[.,]\d+)?%?\b/g) ?? []);
+  const number = (body.replace(/https?:\/\/\S+/gi, '').match(/\b\d+(?:[.,]\d+)?%?\b/g) ?? []).find((claim) => !allowedNumbers.has(claim));
+  if (number) problems.push(`It mentions a number the agent didn't measure ("${number}")`);
+  const urls = (body.match(/https?:\/\/\S+/gi) ?? []).map((url) => url.replace(/[),.!?]+$/, ''));
+  if (urls.length > 1 || urls.some((url) => !allowedUrls.includes(url))) problems.push('It contains a link other than your portfolio example (links are added automatically)');
+  const bannedPhrase = containsBannedPhrase(`${subject} ${body}`, banned);
+  if (bannedPhrase) problems.push(`It uses a phrase you asked the agent to avoid ("${bannedPhrase}")`);
+  return problems;
+}
+
 export async function runTick() {
   const now = new Date();
   const got = await prisma.lease.updateMany({
@@ -1465,6 +1532,7 @@ async function auditAndDraft() {
             ...candidate.info,
             angle,
             subjectStyle,
+            draftIssues: d.manualRequired ? d.issues : [],
             memoryIds: memory.instructions.map((item) => item.id),
           } as unknown as Prisma.InputJsonValue,
           },
@@ -1500,28 +1568,6 @@ async function auditAndDraft() {
   }
 }
 
-function isValidDraft(
-  value: { subject: string; body: string },
-  businessName: string,
-  facts: string[],
-  allowedUrls: string[],
-) {
-  const subject = value.subject.trim();
-  const body = value.body.trim();
-  const words = body.split(/\s+/).filter(Boolean);
-  const urls = (body.match(/https?:\/\/\S+/gi) ?? []).map((url) => url.replace(/[),.!?]+$/, ''));
-  const bodyWithoutUrls = body.replace(/https?:\/\/\S+/gi, '');
-  const allowedNumbers = new Set(`${facts.join(' ')} ${businessName}`.match(/\b\d+(?:[.,]\d+)?%?\b/g) ?? []);
-  const numericClaims = bodyWithoutUrls.match(/\b\d+(?:[.,]\d+)?%?\b/g) ?? [];
-  return subject.length >= 8 && subject.length <= 100 && subject.split(/\s+/).length <= 12 &&
-    !/[\r\n]/.test(subject) && words.length >= 80 && words.length <= 120 &&
-    body.toLowerCase().includes(businessName.toLowerCase()) && !/[<>]/.test(body) &&
-    !/\b(guaranteed|100%|act now|limited time|risk[- ]free)\b/i.test(`${subject} ${body}`) &&
-    numericClaims.every((claim) => allowedNumbers.has(claim)) &&
-    urls.length <= 1 && urls.every((url) => allowedUrls.includes(url)) &&
-    facts.some((fact) => body.toLowerCase().includes(fact.toLowerCase()));
-}
-
 function wordShingles(text: string) {
   const words = text.toLowerCase().match(/[a-z0-9']+/g) ?? [];
   const shingles = new Set<string>();
@@ -1542,7 +1588,7 @@ function isNearDuplicate(text: string, previous: Array<{ subject: string | null;
 }
 
 async function draft(
-  b: { name: string | null; city: string | null; track: string },
+  b: { name: string | null; city: string | null; track: string; niche?: string | null },
   _url: string,
   findings: string[],
   recent: Array<{ subject: string | null; body: string | null }>,
@@ -1553,38 +1599,56 @@ async function draft(
 ) {
   const facts = findings.map((x) => LABEL[x]).filter((fact): fact is string => Boolean(fact));
   const noSite = b.track === 'no_site';
+  const name = b.name ?? 'your business';
   const portfolio = portfolioMatch(b.name ?? '', b.track, facts);
   const allowedUrls = portfolio ? [portfolio.url] : [];
-  const fallback = {
-    subject: noSite ? `A simple online presence for ${b.name}` : `Quick note about ${b.name}'s website`,
-    body: noSite
-      ? `Hi,\n\n${facts.join('; and ')}. I help small businesses get a simple website and online booking presence set up. Would it be useful if I sent a short outline?\n\n${env.SENDER_NAME}`
-      : `Hi,\n\nI was looking at ${b.name}'s website and noticed that ${facts.join('; and ')}. I'm a freelance web developer and could help improve this. Would it be useful if I sent a short outline?\n\n${env.SENDER_NAME}`,
-  };
-  let selected = fallback;
+  let selected = templateDraft(name, b.track, findings, env.SENDER_NAME ?? '');
   let manualRequired = true;
   let confidence: number | null = null;
   let previousAttempt = '';
+  // Why the AI suggestion could not be used; shown on the draft card so the reviewer knows what to fix.
+  let issues: string[] = [];
+  if (!env.LLM_API_KEY) issues = ['No AI key is configured (LLM_API_KEY), so the template below was used'];
+  else if (TOKEN_BUDGET <= 0) issues = ['The AI token budget is set to zero (LLM_DAILY_TOKEN_BUDGET), so the template below was used'];
   if (env.LLM_API_KEY && TOKEN_BUDGET > 0) {
+    // Reasoning models (gpt-5, o-series) reject custom temperatures and spend part of the token limit thinking.
+    const reasoningModel = /^(gpt-5|o\d)/i.test(env.LLM_MODEL ?? '');
+    const maxTokens = reasoningModel ? 1500 : 500;
     for (let attempt = 0; attempt < 3; attempt++) {
       const request = {
         model: env.LLM_MODEL,
         response_format: { type: 'json_object' },
-        max_completion_tokens: 350,
-        temperature: 0.4,
+        max_completion_tokens: maxTokens,
+        ...(reasoningModel ? {} : { temperature: 0.6 }),
         messages: [
           {
             role: 'system',
-            content: 'Write a polite, plain-text business outreach email of 80-120 words. Use ONLY the verified facts given; make no unsupported claims or numbers. Never say a business has no website; say only that no website was linked from its public listing. One specific observation, one practical improvement, one low-pressure question. No hype, pressure, flattery, fake familiarity, or invented links. Include at most the supplied portfolio proof URL. For recontacts, use the requested angle and do not repeat prior angle. Follow the requested subjectStyle. If a playbook list of owner preferences is supplied, follow it only where it does not conflict with these rules. Return JSON with exactly subject (string), body (string), finding_ids_used (array of supplied finding ids), and confidence (number 0..1).',
+            content: [
+              'You write short, warm, persuasive cold emails from a freelance web developer to a small local business.',
+              'The goal is to show how fixing what we found will help their business: more customers, more bookings, more trust. Focus on outcomes, not technology.',
+              'Structure, in short paragraphs:',
+              '1) Greet the business by name.',
+              '2) Describe one or two problems in plain, everyday words and what they may cost the business, using ONLY the supplied findings and their "problem" text.',
+              '3) Pitch confidently: say clearly that you can fix this and describe the result, based on the supplied "fix" text.',
+              '4) Say that a couple of recent projects are linked below (the links are added automatically).',
+              '5) End with an easy, low-pressure next step: offer to send a short, free video showing exactly what you would change.',
+              '90-150 words, plain text. No jargon: never say LCP, PageSpeed, meta description, viewport, HTTPS or SEO score.',
+              'Do not use any digits or invented statistics, prices, guarantees or deadlines. Never say a business has no website; say only that no website was linked from its public listing.',
+              'No hype, pressure, flattery or fake familiarity. Do not write any URL except the optional portfolio proof URL.',
+              'For recontacts, use the requested angle and do not repeat prior angles. Follow the requested subjectStyle; keep the subject under nine words.',
+              'If an owner playbook is supplied, follow it where it does not conflict with these rules.',
+              'Return JSON with exactly: subject (string), body (string), finding_ids_used (array of supplied finding ids), confidence (number 0..1).',
+            ].join(' '),
           },
           {
             role: 'user',
             content: JSON.stringify({
               business: b.name,
+              type_of_business: b.niche ?? undefined,
               city: b.city,
               track: noSite ? 'no-site' : 'site',
-              offer: noSite ? 'starter website and online booking presence' : 'website improvements',
-              findings: findings.map((id) => ({ id, evidence: LABEL[id] })),
+              offer: noSite ? 'a simple professional website with online booking or enquiries' : 'fixing the website problems below so it wins more customers',
+              findings: findings.map((id) => ({ id, problem: PITCH[id]?.problem ?? LABEL[id], fix: PITCH[id]?.fix, verified_evidence: LABEL[id] })),
               sender: env.SENDER_NAME,
               recontact: previousContactCount > 0,
               angle,
@@ -1594,11 +1658,12 @@ async function draft(
               previousAngles: previousContactCount > 0 ? previousAngles : [],
               portfolio: portfolio ?? undefined,
               previousDraft: attempt ? previousAttempt : undefined,
+              previousProblems: attempt && issues.length ? issues : undefined,
             }),
           },
         ],
       };
-      const estimate = Math.ceil(JSON.stringify(request).length / 3) + 350;
+      const estimate = Math.ceil(JSON.stringify(request).length / 3) + maxTokens;
       const utcDay = new Date();
       utcDay.setUTCHours(0, 0, 0, 0);
       await prisma.dailyTokenUsage.upsert({
@@ -1612,6 +1677,7 @@ async function draft(
       });
       if (!reserved.count) {
         console.info(JSON.stringify({ level: 'info', event: 'llm_token_budget_exhausted', budget: TOKEN_BUDGET }));
+        issues = ["Today's AI token budget is used up (raise LLM_DAILY_TOKEN_BUDGET on Render), so the template below was used"];
         break;
       }
       let actualTokens: number | null = null;
@@ -1621,14 +1687,17 @@ async function draft(
         const response = await fetch(`${baseUrl}/chat/completions`, {
           method: 'POST',
           headers: { authorization: `Bearer ${env.LLM_API_KEY}`, 'content-type': 'application/json' },
-          signal: AbortSignal.timeout(30000),
+          signal: AbortSignal.timeout(60000),
           body: JSON.stringify(request),
         });
-        if (!response.ok) throw new Error(`LLM request failed with HTTP ${response.status}`);
+        if (!response.ok) {
+          const detail = await response.json().then((json: { error?: { message?: string } }) => json.error?.message ?? '').catch(() => '');
+          throw new Error(`AI provider returned HTTP ${response.status}${detail ? `: ${detail.slice(0, 200)}` : ''}`);
+        }
         const payload: unknown = await response.json();
-        if (!payload || typeof payload !== 'object') throw new Error('LLM response was not an object');
+        if (!payload || typeof payload !== 'object') throw new Error('The AI response was not readable');
         const data = payload as {
-          choices?: Array<{ message?: { content?: unknown } }>;
+          choices?: Array<{ message?: { content?: unknown }; finish_reason?: string }>;
           usage?: { total_tokens?: unknown };
         };
         // Count the tokens the provider actually billed even if the draft below fails validation.
@@ -1636,47 +1705,39 @@ async function draft(
           ? data.usage.total_tokens
           : estimate;
         const content = data.choices?.[0]?.message?.content;
-        if (typeof content !== 'string') throw new Error('LLM response did not include message content');
-        const generated: unknown = JSON.parse(content);
-        if (!generated || typeof generated !== 'object' || Array.isArray(generated)) throw new Error('LLM draft was not a JSON object');
+        if (typeof content !== 'string' || !content.trim()) {
+          throw new Error(data.choices?.[0]?.finish_reason === 'length'
+            ? 'The AI ran out of room before writing the email (token limit too small for this model)'
+            : 'The AI returned an empty reply');
+        }
+        let generated: unknown;
+        try { generated = JSON.parse(content); } catch { throw new Error('The AI reply was not in the expected format'); }
+        if (!generated || typeof generated !== 'object' || Array.isArray(generated)) throw new Error('The AI reply was not in the expected format');
         previousAttempt = content;
-        const candidate = generated as {
-          subject?: unknown;
-          body?: unknown;
-          finding_ids_used?: unknown;
-          confidence?: unknown;
-        };
-        const responseKeys = Object.keys(generated);
-        if (responseKeys.length !== 4 ||
-            !['subject', 'body', 'finding_ids_used', 'confidence'].every((key) => responseKeys.includes(key)) ||
-            typeof candidate.subject !== 'string' || typeof candidate.body !== 'string' ||
-            !Array.isArray(candidate.finding_ids_used) || candidate.finding_ids_used.length === 0 ||
-            !candidate.finding_ids_used.every((id) => typeof id === 'string' && findings.includes(id)) ||
-            typeof candidate.confidence !== 'number' || !Number.isFinite(candidate.confidence) ||
-            candidate.confidence < 0 || candidate.confidence > 1 ||
-            !isValidDraft({ subject: candidate.subject, body: candidate.body }, b.name ?? '', facts, allowedUrls) ||
-            containsBannedPhrase(`${candidate.subject} ${candidate.body}`, brain.banned) !== null ||
-            !candidate.finding_ids_used.every((id) => {
-              const fact = LABEL[id as string];
-              return Boolean(fact && typeof candidate.body === 'string' &&
-                candidate.body.toLowerCase().includes(fact.toLowerCase()));
-            })) {
-          throw new Error('LLM draft failed response or content validation');
+        const candidate = generated as { subject?: unknown; body?: unknown; finding_ids_used?: unknown; confidence?: unknown };
+        if (typeof candidate.subject !== 'string' || typeof candidate.body !== 'string') throw new Error('The AI reply was missing a subject or message');
+        const problems = draftProblems({ subject: candidate.subject, body: candidate.body }, b.name ?? '', allowedUrls, brain.banned);
+        if (!Array.isArray(candidate.finding_ids_used) || !candidate.finding_ids_used.length ||
+            !candidate.finding_ids_used.every((id) => typeof id === 'string' && findings.includes(id))) {
+          problems.push('It referred to a problem the agent did not actually verify');
         }
         const candidateText = `${candidate.subject.trim()} ${candidate.body.trim()}`;
-        if (isNearDuplicate(candidateText, recent)) throw new Error('LLM draft is too similar to recent outreach');
+        if (isNearDuplicate(candidateText, recent)) problems.push('It is too similar to an email sent recently');
+        if (problems.length) {
+          issues = problems;
+          throw new Error(problems.join('; '));
+        }
         validCandidate = {
           subject: candidate.subject.trim(),
           body: candidate.body.trim(),
-          confidence: candidate.confidence,
+          confidence: typeof candidate.confidence === 'number' && Number.isFinite(candidate.confidence)
+            ? Math.max(0, Math.min(1, candidate.confidence))
+            : 0.6,
         };
       } catch (error) {
-        console.error(JSON.stringify({
-          level: 'error',
-          event: 'llm_draft_attempt_failed',
-          attempt: attempt + 1,
-          message: errorMessage(error),
-        }));
+        const message = errorMessage(error);
+        if (!issues.length || !issues.join('; ').includes(message)) issues = [message];
+        console.error(JSON.stringify({ level: 'error', event: 'llm_draft_attempt_failed', attempt: attempt + 1, message }));
       }
       await prisma.dailyTokenUsage.update({
         where: { day: utcDay },
@@ -1686,6 +1747,7 @@ async function draft(
         selected = { subject: validCandidate.subject, body: validCandidate.body };
         confidence = validCandidate.confidence;
         manualRequired = false;
+        issues = [];
         break;
       }
     }
@@ -1694,9 +1756,9 @@ async function draft(
     if (portfolio && !noSite) {
       selected.body = `${selected.body}\n\nA relevant example of my work: ${portfolio.url}`;
     }
-    console.info(JSON.stringify({ level: 'info', event: 'draft_requires_manual_writing' }));
+    console.info(JSON.stringify({ level: 'info', event: 'draft_requires_manual_writing', issues }));
   }
-  return { ...selected, manualRequired, confidence, portfolioName: portfolio?.name ?? null };
+  return { ...selected, manualRequired, confidence, portfolioName: portfolio?.name ?? null, issues };
 }
 
 type PortfolioProject = { name: string; summary: string; niche: string; url: string };

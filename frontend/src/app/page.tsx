@@ -24,6 +24,7 @@ type Draft = {
   selection?: Record<string, unknown> | null;
   agent_low_risk?: boolean;
   signature_preview?: string;
+  draft_issues?: string[];
 };
 
 type HeldEmail = {
@@ -226,7 +227,13 @@ export default function Review() {
                   {draft.screenshot_data && <img className="audit-thumbnail" src={`data:image/webp;base64,${draft.screenshot_data}`} alt={`Temporary PageSpeed preview of ${draft.name}'s website`} />}
                   <div className="recipient-line"><span>TO</span>{draft.to_email}</div>
                   {draft.contact_source_url && <div className="source-line">Contact published at <a href={draft.contact_source_url} target="_blank" rel="noreferrer">{draft.contact_source_url}</a></div>}
-                  {draft.manual_required && <div className="manual-writing-warning" role="status">Manual writing required — the generated suggestion did not pass all quality checks. Rewrite the message before approving.</div>}
+                  {draft.manual_required && (
+                    <div className="manual-writing-warning" role="status">
+                      <strong>Needs your edit before it can be approved.</strong> The AI version could not be used{draft.draft_issues?.length ? ':' : ', so a ready-made pitch was filled in below.'}
+                      {!!draft.draft_issues?.length && <ul>{draft.draft_issues.map((issue) => <li key={issue}>{issue}</li>)}</ul>}
+                      <span>The message below is a ready-made pitch built from the verified findings. Read it, adjust anything that does not fit this business, then approve.</span>
+                    </div>
+                  )}
                   {draft.draft_angle && <div className="draft-angle">Angle: {draft.draft_angle}</div>}
                   {draft.portfolio_project && <div className="draft-angle">Matched portfolio example: {draft.portfolio_project}</div>}
                   {draft.selection && (
