@@ -1659,15 +1659,21 @@ async function draft(
   if (!env.LLM_API_KEY) issues = ['No AI key is configured (LLM_API_KEY), so the template below was used'];
   else if (TOKEN_BUDGET <= 0) issues = ['The AI token budget is set to zero (LLM_DAILY_TOKEN_BUDGET), so the template below was used'];
   if (env.LLM_API_KEY && TOKEN_BUDGET > 0) {
-    // Reasoning models (gpt-5, o-series) reject custom temperatures and spend part of the token limit thinking.
-    const reasoningModel = /^(gpt-5|o\d)/i.test(env.LLM_MODEL ?? '');
-    const maxTokens = reasoningModel ? 1500 : 500;
+    // OpenAI reasoning models (gpt-5, o-series) reject custom temperatures; all reasoning models spend part of
+    // the token limit thinking. Groq's gpt-oss takes a reasoning effort and can leave its reasoning out of the reply.
+    const model = env.LLM_MODEL ?? '';
+    const openAiReasoning = /^(gpt-5|o\d)/i.test(model);
+    const gptOss = /gpt-oss/i.test(model);
+    const maxTokens = openAiReasoning || gptOss ? 1500 : 500;
+    const modelOptions = gptOss
+      ? { temperature: 0.6, reasoning_effort: 'low', include_reasoning: false }
+      : openAiReasoning ? {} : { temperature: 0.6 };
     for (let attempt = 0; attempt < 3; attempt++) {
       const request = {
         model: env.LLM_MODEL,
         response_format: { type: 'json_object' },
         max_completion_tokens: maxTokens,
-        ...(reasoningModel ? {} : { temperature: 0.6 }),
+        ...modelOptions,
         messages: [
           {
             role: 'system',
