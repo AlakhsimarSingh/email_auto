@@ -26,6 +26,7 @@ type Draft = {
   signature_preview?: string;
   draft_issues?: string[];
   draft_template?: 'pitch_v2' | null;
+  niche?: string | null;
 };
 
 type HeldEmail = {
@@ -73,6 +74,10 @@ export default function Review() {
   const [error, setError] = useState('');
   const [busyId, setBusyId] = useState<number | null>(null);
   const [rated, setRated] = useState<Record<number, 'up' | 'down'>>({});
+  // Per-draft rewrite suggestion, how widely to remember it, and the result note.
+  const [suggestions, setSuggestions] = useState<Record<number, string>>({});
+  const [rememberModes, setRememberModes] = useState<Record<number, 'niche' | 'all' | 'off'>>({});
+  const [rewriteNotes, setRewriteNotes] = useState<Record<number, string>>({});
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -134,12 +139,25 @@ export default function Review() {
     }
   };
 
-  const rewrite = async (id: number) => {
+  const rewrite = async (draft: Draft) => {
+    const id = draft.id;
+    const instruction = (suggestions[id] ?? '').trim();
+    const remember = rememberModes[id] ?? 'niche';
     setBusyId(id);
     setError('');
     try {
-      const response = await fetch(`/api/proxy/emails/${id}/regenerate`, { method: 'POST' });
-      if (!response.ok) throw new Error(response.status === 404 ? 'This draft can no longer be rewritten (it may already be approved or rejected).' : 'Could not rewrite this draft. Please try again.');
+      const response = await fetch(`/api/proxy/emails/${id}/regenerate`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ instruction: instruction || null, subject: draft.subject, body: draft.body, remember }),
+      });
+      const result = await response.json().catch(() => null) as { message?: string; manualRequired?: boolean; remembered?: 'saved' | 'reinforced' | 'full' | null } | null;
+      if (!response.ok) throw new Error(result?.message ?? (response.status === 404 ? 'This draft can no longer be rewritten (it may already be approved or rejected).' : 'Could not rewrite this draft. Please try again.'));
+      const learned = result?.remembered === 'saved' || result?.remembered === 'reinforced'
+        ? ` Learned for ${remember === 'niche' && draft.niche ? `${draft.niche} businesses` : 'all drafts'}; you can edit or remove it on the Brain page.`
+        : result?.remembered === 'full' ? ' Agent memory is full, so it was not remembered (tidy up on the Brain page).' : '';
+      setRewriteNotes((current) => ({ ...current, [id]: `${result?.manualRequired ? 'Rewritten with the ready-made pitch (see the note above).' : 'Rewritten by the AI.'}${learned}` }));
+      setSuggestions((current) => ({ ...current, [id]: '' }));
       await load();
     } catch (rewriteError) {
       setError(rewriteError instanceof Error ? rewriteError.message : 'Could not rewrite this draft.');
@@ -303,11 +321,37 @@ export default function Review() {
                       <div><strong>Current</strong><pre>{draft.subject}\n\n{draft.body}</pre></div>
                     </details>
                   )}
+                  <div className="rewrite-box">
+                    <label className="field-label" htmlFor={`suggest-${draft.id}`}>Suggest a change <span>(optional)</span></label>
+                    <textarea
+                      id={`suggest-${draft.id}`}
+                      rows={2}
+                      maxLength={300}
+                      placeholder="e.g. Shorter and friendlier. Lead with the slow mobile site."
+                      value={suggestions[draft.id] ?? ''}
+                      onChange={(event) => setSuggestions((current) => ({ ...current, [draft.id]: event.target.value }))}
+                    />
+                    <div className="rewrite-row">
+                      <select
+                        aria-label="Remember this suggestion"
+                        value={rememberModes[draft.id] ?? 'niche'}
+                        disabled={!(suggestions[draft.id] ?? '').trim()}
+                        onChange={(event) => setRememberModes((current) => ({ ...current, [draft.id]: event.target.value as 'niche' | 'all' | 'off' }))}
+                      >
+                        <option value="niche">{draft.niche ? `Remember for ${draft.niche} businesses` : 'Remember for this business type'}</option>
+                        <option value="all">Remember for all drafts</option>
+                        <option value="off">Just this draft</option>
+                      </select>
+                      <button className="reject-button" disabled={busyId === draft.id} onClick={() => void rewrite(draft)}>
+                        {busyId === draft.id ? 'Rewriting…' : (suggestions[draft.id] ?? '').trim() ? 'Rewrite with suggestion' : 'Rewrite'}
+                      </button>
+                    </div>
+                    {rewriteNotes[draft.id] && <p className="rewrite-note" role="status">{rewriteNotes[draft.id]}</p>}
+                  </div>
                   <div className="draft-actions">
                     <button className="approve-button" disabled={busyId === draft.id} onClick={() => void act(draft.id, 'approve', draft)}>
                       <Icon name="check" /> {busyId === draft.id ? 'Saving…' : 'Approve & queue'}
                     </button>
-                    <button className="reject-button" disabled={busyId === draft.id} onClick={() => void rewrite(draft.id)}>{busyId === draft.id ? 'Working…' : 'Rewrite'}</button>
                     <button className="reject-button" disabled={busyId === draft.id} onClick={() => void act(draft.id, 'reject')}>Reject & suppress</button>
                     <button className="reject-button" disabled={!!rated[draft.id]} aria-label="Good draft" title="Good draft: teaches the agent" onClick={() => void rate(draft.id, 3)}>{rated[draft.id] === 'up' ? '👍 Thanks' : '👍'}</button>
                     <button className="reject-button" disabled={!!rated[draft.id]} aria-label="Poor draft" title="Poor draft: teaches the agent" onClick={() => void rate(draft.id, -3)}>{rated[draft.id] === 'down' ? '👎 Noted' : '👎'}</button>

@@ -1644,6 +1644,7 @@ async function draft(
   angle: string,
   previousAngles: string[],
   brain: { instructions: string[]; banned: string[]; style: SubjectStyle } = { instructions: [], banned: [], style: 'plain' },
+  review: { instruction?: string | null; current?: { subject: string; body: string } | null } = {},
 ) {
   const facts = findings.map((x) => LABEL[x]).filter((fact): fact is string => Boolean(fact));
   const noSite = b.track === 'no_site';
@@ -1691,6 +1692,7 @@ async function draft(
               'No hype, pressure, flattery or fake familiarity. Do not write any URL except the optional portfolio proof URL.',
               'For recontacts, use the requested angle and do not repeat prior angles. Follow the requested subjectStyle; keep the subject under nine words.',
               'If an owner playbook is supplied, follow it where it does not conflict with these rules.',
+              'If reviewer_instruction is supplied, rewrite current_draft to follow it closely, while still keeping every rule above.',
               'Return JSON with exactly: subject (string), body (string), finding_ids_used (array of supplied finding ids), confidence (number 0..1).',
             ].join(' '),
           },
@@ -1713,6 +1715,8 @@ async function draft(
               portfolio: portfolio ?? undefined,
               previousDraft: attempt ? previousAttempt : undefined,
               previousProblems: attempt && issues.length ? issues : undefined,
+              reviewer_instruction: review.instruction || undefined,
+              current_draft: review.instruction && review.current ? review.current : undefined,
             }),
           },
         ],
@@ -1810,6 +1814,9 @@ async function draft(
       }
     }
   }
+  if (manualRequired && review.instruction) {
+    issues = [...issues, 'Your suggestion could not be applied because the AI version was unavailable; edit the message yourself or press Rewrite again later'];
+  }
   if (manualRequired) {
     if (portfolio && !noSite) {
       selected.body = `${selected.body}\n\nA relevant example of my work: ${portfolio.url}`;
@@ -1820,7 +1827,29 @@ async function draft(
 }
 
 /** Re-writes a waiting draft with the current pitch (used by the Rewrite button on the review queue). */
-export async function regenerateDraft(emailId: number) {
+export type RewriteRequest = {
+  instruction?: string | null;
+  current?: { subject: string; body: string } | null;
+  /** Save the suggestion to agent memory for this business type, for all drafts, or not at all. */
+  remember?: 'niche' | 'all' | 'off';
+  actor?: string;
+};
+
+/** Saves a reviewer's rewrite suggestion as an owner instruction (shown and editable on the Brain page). */
+async function rememberSuggestion(text: string, scope: Record<string, string>, actor: string) {
+  const existing = (await prisma.agentMemory.findMany({ where: { active: true, kind: 'instruction' }, select: { id: true, text: true, scope: true } }))
+    .find((item) => item.text.trim().toLowerCase() === text.toLowerCase() && JSON.stringify(item.scope ?? {}) === JSON.stringify(scope));
+  if (existing) {
+    await prisma.agentMemory.update({ where: { id: existing.id }, data: { evidenceCount: { increment: 1 }, lastReinforcedAt: new Date() } });
+    return 'reinforced' as const;
+  }
+  if (await prisma.agentMemory.count({ where: { active: true } }) >= 200) return 'full' as const;
+  const item = await prisma.agentMemory.create({ data: { kind: 'instruction', text, scope, source: 'rewrite_request', confidence: 1, evidenceCount: 1 } });
+  await prisma.auditLog.create({ data: { actorEmail: actor, action: 'agent.memory_created', target: String(item.id), meta: { kind: 'instruction', source: 'rewrite_request', scope } } });
+  return 'saved' as const;
+}
+
+export async function regenerateDraft(emailId: number, request: RewriteRequest = {}) {
   const email = await prisma.email.findFirst({
     where: { id: emailId, status: 'drafted' },
     include: { business: true },
@@ -1840,9 +1869,20 @@ export async function regenerateDraft(emailId: number) {
   const style = (typeof info.subjectStyle === 'string' ? info.subjectStyle : await chooseSubjectStyle()) as SubjectStyle;
   const memory = await getDraftingMemory({ niche: b.niche, country: b.country, track: b.track });
   activity('draft', `Rewriting the draft for ${b.name ?? 'a business'} with the current pitch`);
+  const instruction = request.instruction?.trim() || null;
+  // Remember first, so the suggestion is part of the agent's memory for this and every later draft.
+  let remembered: 'saved' | 'reinforced' | 'full' | null = null;
+  if (instruction && request.remember && request.remember !== 'off') {
+    const scope: Record<string, string> = request.remember === 'niche' && b.niche ? { niche: b.niche } : {};
+    remembered = await rememberSuggestion(instruction, scope, request.actor ?? 'reviewer');
+    activity('learn', remembered === 'full'
+      ? 'Could not remember the suggestion: agent memory is full (review it on the Brain page)'
+      : `${remembered === 'saved' ? 'Learned' : 'Reinforced'} a drafting instruction${request.remember === 'niche' && b.niche ? ` for ${b.niche} businesses` : ' for all drafts'}: "${instruction}"`,
+      remembered === 'full' ? 'warn' : 'success');
+  }
   const d = await draft(b, b.websiteUrl ?? '', findings, recent, email.sequenceStep, angle, [], {
     instructions: memory.instructions.map((item) => item.text), banned: memory.banned, style,
-  });
+  }, { instruction, current: request.current ?? { subject: email.subject ?? '', body: email.body ?? '' } });
   await prisma.email.update({
     where: { id: email.id },
     data: {
@@ -1854,7 +1894,7 @@ export async function regenerateDraft(emailId: number) {
   activity('draft', d.manualRequired
     ? `Rewrote the draft for ${b.name ?? 'a business'} using the ready-made pitch (${d.issues[0] ?? 'AI unavailable'})`
     : `Rewrote the draft for ${b.name ?? 'a business'} with AI`, d.manualRequired ? 'warn' : 'success');
-  return { manualRequired: d.manualRequired, issues: d.issues };
+  return { manualRequired: d.manualRequired, issues: d.issues, remembered };
 }
 
 type PortfolioProject = { name: string; summary: string; niche: string; url: string };

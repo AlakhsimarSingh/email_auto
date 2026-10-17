@@ -4,6 +4,7 @@ import { createHash, randomInt, randomUUID, timingSafeEqual } from 'node:crypto'
 import { lookup, resolveMx } from 'node:dns/promises';
 import { disconnectDb, prisma } from './db.js';
 import { regenerateDraft, runTick } from './jobs.js';
+import { cleanGuidanceText } from './brain-math.js';
 import { authenticate, registerAuthRoutes, requireOwner, requireStepUp } from './auth.js';
 import { nextRecipientWindow, SEND_PLAN_MIN_NOTICE_MS } from './scheduling.js';
 import { createAnnouncedSendPlan } from './send-plans.js';
@@ -1266,7 +1267,7 @@ app.register(async (r) => {
       orderBy: { createdAt: 'asc' },
       take: 50,
       include: {
-        business: { select: { name: true, city: true, country: true, timezone: true, websiteUrl: true, findings: true, scoreSignals: true, screenshot: true } },
+        business: { select: { name: true, niche: true, city: true, country: true, timezone: true, websiteUrl: true, findings: true, scoreSignals: true, screenshot: true } },
         contact: { select: { email: true, sourceUrl: true } },
       },
     });
@@ -1291,6 +1292,7 @@ app.register(async (r) => {
       agent_low_risk: signal.eligible && !email.manualRequired && (email.draftConfidence ?? 0) >= 0.8,
       screenshot_data: email.business?.screenshot ? Buffer.from(email.business.screenshot).toString('base64') : null,
       signature_preview: signaturePreview(email.body ?? ''),
+      niche: email.business?.niche ?? null,
       draft_template: (email.selectionInfo as { template?: unknown } | null)?.template === 'pitch_v2' ? 'pitch_v2' : null,
       draft_issues: (() => {
         const issues = (email.selectionInfo as { draftIssues?: unknown } | null)?.draftIssues;
@@ -1301,7 +1303,18 @@ app.register(async (r) => {
   r.post('/emails/:id/regenerate', async (req, reply) => {
     const emailId = Number((req.params as { id: string }).id);
     if (!Number.isSafeInteger(emailId) || emailId < 1) return reply.code(400).send({ error: 'invalid_email' });
-    const result = await regenerateDraft(emailId);
+    const body = (req.body ?? {}) as { instruction?: unknown; subject?: unknown; body?: unknown; remember?: unknown };
+    const instruction = body.instruction === undefined || body.instruction === null || body.instruction === ''
+      ? null
+      : cleanGuidanceText(body.instruction, 3, 300);
+    if (body.instruction && !instruction) {
+      return reply.code(400).send({ error: 'invalid_instruction', message: 'Keep the suggestion between 3 and 300 characters, without links or email addresses.' });
+    }
+    const current = typeof body.subject === 'string' && typeof body.body === 'string' && body.subject.length <= 500 && body.body.length <= 10_000
+      ? { subject: body.subject, body: body.body }
+      : null;
+    const remember = body.remember === 'all' || body.remember === 'off' ? body.remember : 'niche';
+    const result = await regenerateDraft(emailId, { instruction, current, remember, actor: req.auth!.email });
     if (!result) return reply.code(404).send({ error: 'draft_not_found' });
     return result;
   });

@@ -469,6 +469,15 @@ h3 { margin-bottom: 0; font-size: 16px; font-weight: 600; }
 .signature-preview { margin-top: 8px; border-radius: var(--radius-sm); background: var(--nested); padding: 10px 12px; }
 .signature-preview span { display: block; margin-bottom: 4px; color: var(--label-2); font-size: 12px; font-weight: 600; letter-spacing: .03em; text-transform: uppercase; }
 .signature-preview pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--label-2); font: 14px/1.55 var(--font); }
+.rewrite-box { margin-top: 14px; border-radius: var(--radius-sm); background: var(--nested); padding: 10px 12px 12px; }
+.rewrite-box .field-label { margin-top: 0; }
+.rewrite-box .field-label span { color: var(--label-3); font-weight: 400; }
+.rewrite-box textarea { min-height: 0 !important; background: var(--card) !important; }
+.rewrite-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.rewrite-row select { flex: 1 1 220px; width: auto !important; background-color: var(--card) !important; }
+.rewrite-row .reject-button { flex: 0 0 auto; background: color-mix(in srgb, var(--tint) 13%, transparent); color: var(--tint); }
+.rewrite-note { margin: 8px 0 0; color: var(--label-2); font-size: 13px; }
+@media (max-width: 899px) { .rewrite-row .reject-button { flex: 1 1 100%; min-height: 42px; } }
 .draft-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
 
 .pipeline-panel h2 { margin-top: 2px; }
@@ -840,6 +849,7 @@ h3 { margin-bottom: 0; font-size: 16px; font-weight: 600; }
   /* Primary action spans the row; secondary actions share the next one */
   .draft-actions .approve-button { flex: 1 1 100%; min-height: 46px; }
   .draft-actions .reject-button { flex: 1 1 calc(50% - 4px); min-height: 42px; padding: 0 10px; }
+  .draft-actions .reject-button[aria-label] { flex: 1 1 calc(25% - 6px); }
   .approve-button, .reject-button, .refresh-button { min-height: 44px; }
   .data-table td:first-child { min-width: 170px; }
 }
