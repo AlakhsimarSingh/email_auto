@@ -405,7 +405,7 @@ async function scheduleFollowUps() {
   }
 }
 
-function isDisposableEmail(email: string) {
+export function isDisposableEmail(email: string) {
   const domain = email.split('@')[1]?.toLowerCase();
   return Boolean(domain && [
     'mailinator.com', 'yopmail.com', 'tempmail.com', 'guerrillamail.com',
@@ -732,12 +732,12 @@ export function normalizeWebsite(value: string) {
   return url.toString();
 }
 
-function normalizeContactEmail(value: string | undefined) {
+export function normalizeContactEmail(value: string | undefined) {
   const email = value?.split(/[;,]/, 1)[0]?.trim().toLowerCase();
   return email && email.length <= 254 && /^[^\s@]+@[^\s@]+\.[a-z]{2,}$/i.test(email) ? email : null;
 }
 
-function isPersonalEmail(email: string, country: string | null) {
+export function isPersonalEmail(email: string, country: string | null) {
   if (!['GB', 'DE', 'NL', 'IE'].includes(country ?? '')) return false;
   const domain = email.split('@')[1]?.toLowerCase();
   return Boolean(domain && /^(gmail|googlemail|outlook|hotmail|live|yahoo|icloud|protonmail|proton|aol|msn|mail)\./.test(domain));

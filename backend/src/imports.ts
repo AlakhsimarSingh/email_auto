@@ -2,7 +2,7 @@ import tzLookup from 'tz-lookup';
 import { Prisma } from '@prisma/client';
 import { prisma } from './db.js';
 import { activity } from './activity.js';
-import { addContactIfAllowed, isDirectoryUrl, isSocialUrl, normalizeWebsite } from './jobs.js';
+import { isDirectoryUrl, isDisposableEmail, isPersonalEmail, isSocialUrl, normalizeContactEmail, normalizeWebsite } from './jobs.js';
 import { humanizeCategory, nichePreset, presetForCategory } from './niches.js';
 import { refreshAutoTargeting } from './targeting.js';
 
@@ -160,17 +160,31 @@ export async function importBusinesses(batch: ImportBatch) {
   let withEmail = 0;
   const emailRows = rows.filter((row) => row.email);
   if (emailRows.length) {
-    const stored = await prisma.business.findMany({ where: { osmId: { in: emailRows.map((row) => row.osmId!) } }, select: { id: true, osmId: true, websiteUrl: true, latitude: true, longitude: true } });
-    const emailBySource = new Map(emailRows.map((row) => [row.osmId, row.email!]));
-    for (const business of stored) {
+    // Bulk version of addContactIfAllowed: a handful of queries per batch instead of several per business,
+    // which matters when the database is far from the backend.
+    const stored = await prisma.business.findMany({
+      where: { osmId: { in: emailRows.map((row) => row.osmId!) }, contacts: { none: {} } },
+      select: { id: true, osmId: true, websiteUrl: true, latitude: true, longitude: true, country: true },
+    });
+    const emailBySource = new Map(emailRows.map((row) => [row.osmId, normalizeContactEmail(row.email ?? undefined)]));
+    const wanted = stored.flatMap((business) => {
       const email = emailBySource.get(business.osmId);
-      if (!email) continue;
+      return email && !isDisposableEmail(email) && !isPersonalEmail(email, business.country) ? [{ business, email }] : [];
+    });
+    const emails = [...new Set(wanted.map((item) => item.email))];
+    const [suppressed, taken] = emails.length ? await Promise.all([
+      prisma.suppression.findMany({ where: { email: { in: emails } }, select: { email: true } }),
+      prisma.contact.findMany({ where: { email: { in: emails } }, select: { email: true } }),
+    ]) : [[], []];
+    const blocked = new Set([...suppressed, ...taken].map((row) => row.email));
+    const data = wanted.flatMap(({ business, email }) => {
+      if (blocked.has(email)) return [];
+      blocked.add(email); // one business per address
       // Cite the business's own site when the address is on its domain; otherwise cite the open-data listing.
-      const site = business.websiteUrl && domainOf(business.websiteUrl) === email.split('@')[1]?.toLowerCase() ? business.websiteUrl : null;
-      const before = await prisma.contact.count({ where: { businessId: business.id } });
-      await addContactIfAllowed(business.id, email, site ?? `https://explore.overturemaps.org/#18/${business.latitude}/${business.longitude}`);
-      if (await prisma.contact.count({ where: { businessId: business.id } }) > before) withEmail++;
-    }
+      const site = business.websiteUrl && domainOf(business.websiteUrl) === email.split('@')[1] ? business.websiteUrl : null;
+      return [{ businessId: business.id, email, sourceUrl: site ?? `https://explore.overturemaps.org/#18/${business.latitude}/${business.longitude}` }];
+    });
+    if (data.length) withEmail = (await prisma.contact.createMany({ data, skipDuplicates: true })).count;
   }
   if (inserted) {
     activity('discover', `Imported ${inserted} new ${inserted === 1 ? 'business' : 'businesses'} in ${batch.city} from Overture Maps open data (${withEmail} with a published email)`, 'success');

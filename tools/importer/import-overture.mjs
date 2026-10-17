@@ -8,7 +8,7 @@ import { DuckDBInstance } from '@duckdb/node-api';
 const backend = process.env.BACKEND_PUBLIC_URL?.replace(/\/+$/, '');
 const secret = process.env.TICK_SECRET;
 const maxPerCity = Math.min(Math.max(Number(process.env.MAX_PER_CITY ?? 1500) || 1500, 50), 5000);
-const BATCH = 400;
+const BATCH = 200;
 if (!backend || !secret) {
   console.log('::warning::Set the BACKEND_PUBLIC_URL and TICK_SECRET repository secrets to enable the importer.');
   process.exit(0);
@@ -21,7 +21,8 @@ async function api(path, init = {}) {
       const response = await fetch(`${backend}${path}`, {
         ...init,
         headers: { 'x-tick-key': secret, 'content-type': 'application/json', ...(init.headers ?? {}) },
-        signal: AbortSignal.timeout(120_000),
+        // Retries are safe: the backend skips businesses it already has.
+        signal: AbortSignal.timeout(300_000),
       });
       if (!response.ok) throw new Error(`${path} returned HTTP ${response.status}: ${(await response.text()).slice(0, 300)}`);
       return response.json();
