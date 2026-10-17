@@ -3,7 +3,7 @@ import Fastify from 'fastify';
 import { createHash, randomInt, randomUUID, timingSafeEqual } from 'node:crypto';
 import { lookup, resolveMx } from 'node:dns/promises';
 import { disconnectDb, prisma } from './db.js';
-import { runTick } from './jobs.js';
+import { regenerateDraft, runTick } from './jobs.js';
 import { authenticate, registerAuthRoutes, requireOwner, requireStepUp } from './auth.js';
 import { nextRecipientWindow, SEND_PLAN_MIN_NOTICE_MS } from './scheduling.js';
 import { createAnnouncedSendPlan } from './send-plans.js';
@@ -1291,11 +1291,19 @@ app.register(async (r) => {
       agent_low_risk: signal.eligible && !email.manualRequired && (email.draftConfidence ?? 0) >= 0.8,
       screenshot_data: email.business?.screenshot ? Buffer.from(email.business.screenshot).toString('base64') : null,
       signature_preview: signaturePreview(email.body ?? ''),
+      draft_template: (email.selectionInfo as { template?: unknown } | null)?.template === 'pitch_v2' ? 'pitch_v2' : null,
       draft_issues: (() => {
         const issues = (email.selectionInfo as { draftIssues?: unknown } | null)?.draftIssues;
         return Array.isArray(issues) ? issues.filter((issue): issue is string => typeof issue === 'string') : [];
       })(),
     }));
+  });
+  r.post('/emails/:id/regenerate', async (req, reply) => {
+    const emailId = Number((req.params as { id: string }).id);
+    if (!Number.isSafeInteger(emailId) || emailId < 1) return reply.code(400).send({ error: 'invalid_email' });
+    const result = await regenerateDraft(emailId);
+    if (!result) return reply.code(404).send({ error: 'draft_not_found' });
+    return result;
   });
   r.post('/emails/:id/approve', async (req, reply) => {
     const { id } = req.params as { id: string };
@@ -1317,7 +1325,9 @@ app.register(async (r) => {
     if (!subject || !message || /[\u0000-\u0008\u000B\u000C\u000E-\u001F]/.test(subject + message)) {
       return reply.code(400).send({ error: 'invalid_approval_content' });
     }
-    if (email.manualRequired && message === (email.origBody ?? '').trim()) {
+    // The new ready-made pitch (template pitch_v2) is complete and fact-checked, so it may be approved as-is;
+    // older template drafts must be edited or rewritten first.
+    if (email.manualRequired && message === (email.origBody ?? '').trim() && (email.selectionInfo as { template?: unknown } | null)?.template !== 'pitch_v2') {
       return reply.code(400).send({ error: 'manual_draft_must_be_rewritten' });
     }
     const holdMinutes = Number(env.SEND_HOLD_MINUTES ?? 30);

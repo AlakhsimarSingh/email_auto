@@ -1533,6 +1533,7 @@ async function auditAndDraft() {
             angle,
             subjectStyle,
             draftIssues: d.manualRequired ? d.issues : [],
+            template: d.template,
             memoryIds: memory.instructions.map((item) => item.id),
           } as unknown as Prisma.InputJsonValue,
           },
@@ -1758,7 +1759,45 @@ async function draft(
     }
     console.info(JSON.stringify({ level: 'info', event: 'draft_requires_manual_writing', issues }));
   }
-  return { ...selected, manualRequired, confidence, portfolioName: portfolio?.name ?? null, issues };
+  return { ...selected, manualRequired, confidence, portfolioName: portfolio?.name ?? null, issues, template: manualRequired ? 'pitch_v2' : null };
+}
+
+/** Re-writes a waiting draft with the current pitch (used by the Rewrite button on the review queue). */
+export async function regenerateDraft(emailId: number) {
+  const email = await prisma.email.findFirst({
+    where: { id: emailId, status: 'drafted' },
+    include: { business: true },
+  });
+  if (!email?.business) return null;
+  const b = email.business;
+  const findings = Array.isArray(b.findings) ? (b.findings as unknown[]).filter((item): item is string => typeof item === 'string' && item in LABEL) : [];
+  if (!findings.length) return null;
+  const info = (email.selectionInfo ?? {}) as Record<string, unknown>;
+  const recent = await prisma.email.findMany({
+    where: { id: { not: email.id }, status: { in: ['drafted', 'approved', 'sent'] }, body: { not: null } },
+    orderBy: { createdAt: 'desc' },
+    take: 50,
+    select: { subject: true, body: true },
+  });
+  const angle = email.draftAngle ?? await chooseAngle(findings, []);
+  const style = (typeof info.subjectStyle === 'string' ? info.subjectStyle : await chooseSubjectStyle()) as SubjectStyle;
+  const memory = await getDraftingMemory({ niche: b.niche, country: b.country, track: b.track });
+  activity('draft', `Rewriting the draft for ${b.name ?? 'a business'} with the current pitch`);
+  const d = await draft(b, b.websiteUrl ?? '', findings, recent, email.sequenceStep, angle, [], {
+    instructions: memory.instructions.map((item) => item.text), banned: memory.banned, style,
+  });
+  await prisma.email.update({
+    where: { id: email.id },
+    data: {
+      subject: d.subject, origSubject: d.subject, body: d.body, origBody: d.body,
+      manualRequired: d.manualRequired, draftConfidence: d.confidence, portfolioProject: d.portfolioName,
+      selectionInfo: { ...info, draftIssues: d.manualRequired ? d.issues : [], template: d.template } as unknown as Prisma.InputJsonValue,
+    },
+  });
+  activity('draft', d.manualRequired
+    ? `Rewrote the draft for ${b.name ?? 'a business'} using the ready-made pitch (${d.issues[0] ?? 'AI unavailable'})`
+    : `Rewrote the draft for ${b.name ?? 'a business'} with AI`, d.manualRequired ? 'warn' : 'success');
+  return { manualRequired: d.manualRequired, issues: d.issues };
 }
 
 type PortfolioProject = { name: string; summary: string; niche: string; url: string };

@@ -839,7 +839,7 @@ h3 { margin-bottom: 0; font-size: 16px; font-weight: 600; }
   .filter-button { flex: 1 1 auto; }
   /* Primary action spans the row; secondary actions share the next one */
   .draft-actions .approve-button { flex: 1 1 100%; min-height: 46px; }
-  .draft-actions .reject-button { flex: 1 1 0; min-height: 42px; padding: 0 10px; }
+  .draft-actions .reject-button { flex: 1 1 calc(50% - 4px); min-height: 42px; padding: 0 10px; }
   .approve-button, .reject-button, .refresh-button { min-height: 44px; }
   .data-table td:first-child { min-width: 170px; }
 }

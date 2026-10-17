@@ -25,6 +25,7 @@ type Draft = {
   agent_low_risk?: boolean;
   signature_preview?: string;
   draft_issues?: string[];
+  draft_template?: 'pitch_v2' | null;
 };
 
 type HeldEmail = {
@@ -133,6 +134,20 @@ export default function Review() {
     }
   };
 
+  const rewrite = async (id: number) => {
+    setBusyId(id);
+    setError('');
+    try {
+      const response = await fetch(`/api/proxy/emails/${id}/regenerate`, { method: 'POST' });
+      if (!response.ok) throw new Error(response.status === 404 ? 'This draft can no longer be rewritten (it may already be approved or rejected).' : 'Could not rewrite this draft. Please try again.');
+      await load();
+    } catch (rewriteError) {
+      setError(rewriteError instanceof Error ? rewriteError.message : 'Could not rewrite this draft.');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
   const rate = async (id: number, score: 3 | -3) => {
     setError('');
     try {
@@ -229,9 +244,18 @@ export default function Review() {
                   {draft.contact_source_url && <div className="source-line">Contact published at <a href={draft.contact_source_url} target="_blank" rel="noreferrer">{draft.contact_source_url}</a></div>}
                   {draft.manual_required && (
                     <div className="manual-writing-warning" role="status">
-                      <strong>Needs your edit before it can be approved.</strong> The AI version could not be used{draft.draft_issues?.length ? ':' : ', so a ready-made pitch was filled in below.'}
-                      {!!draft.draft_issues?.length && <ul>{draft.draft_issues.map((issue) => <li key={issue}>{issue}</li>)}</ul>}
-                      <span>The message below is a ready-made pitch built from the verified findings. Read it, adjust anything that does not fit this business, then approve.</span>
+                      {draft.draft_template === 'pitch_v2' ? (
+                        <>
+                          <strong>Written from the ready-made pitch.</strong> The AI version could not be used{draft.draft_issues?.length ? ':' : '.'}
+                          {!!draft.draft_issues?.length && <ul>{draft.draft_issues.map((issue) => <li key={issue}>{issue}</li>)}</ul>}
+                          <span>The message below is built only from the verified findings. Read it, adjust anything that does not fit this business, and approve, or press Rewrite to try the AI again.</span>
+                        </>
+                      ) : (
+                        <>
+                          <strong>This draft uses the old wording.</strong>
+                          <span>It was written before the new pitch. Press <b>Rewrite</b> to regenerate it, or edit the message yourself before approving.</span>
+                        </>
+                      )}
                     </div>
                   )}
                   {draft.draft_angle && <div className="draft-angle">Angle: {draft.draft_angle}</div>}
@@ -283,6 +307,7 @@ export default function Review() {
                     <button className="approve-button" disabled={busyId === draft.id} onClick={() => void act(draft.id, 'approve', draft)}>
                       <Icon name="check" /> {busyId === draft.id ? 'Saving…' : 'Approve & queue'}
                     </button>
+                    <button className="reject-button" disabled={busyId === draft.id} onClick={() => void rewrite(draft.id)}>{busyId === draft.id ? 'Working…' : 'Rewrite'}</button>
                     <button className="reject-button" disabled={busyId === draft.id} onClick={() => void act(draft.id, 'reject')}>Reject & suppress</button>
                     <button className="reject-button" disabled={!!rated[draft.id]} aria-label="Good draft" title="Good draft: teaches the agent" onClick={() => void rate(draft.id, 3)}>{rated[draft.id] === 'up' ? '👍 Thanks' : '👍'}</button>
                     <button className="reject-button" disabled={!!rated[draft.id]} aria-label="Poor draft" title="Poor draft: teaches the agent" onClick={() => void rate(draft.id, -3)}>{rated[draft.id] === 'down' ? '👎 Noted' : '👎'}</button>
