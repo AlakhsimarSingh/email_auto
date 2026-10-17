@@ -668,9 +668,21 @@ h3 { margin-bottom: 0; font-size: 16px; font-weight: 600; }
 .chip.on { background: color-mix(in srgb, var(--tint) 15%, transparent); color: var(--tint); font-weight: 600; }
 .chip.removable { padding-right: 6px; }
 .chip.removable button { display: grid; width: 24px; height: 24px; place-items: center; border: 0; border-radius: 50%; background: color-mix(in srgb, var(--tint) 18%, transparent); color: var(--tint); font-size: 16px; line-height: 1; }
+.targeting-count { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 15px; }
+.targeting-count select { width: 90px !important; }
+.auto-picks { display: grid; border-radius: 12px; background: var(--nested); padding: 4px 14px; }
+.auto-pick { display: flex; align-items: flex-start; gap: 12px; padding: 10px 0; border-top: 1px solid var(--sep); }
+.auto-pick:first-child { border-top: 0; }
+.auto-pick > div { display: grid; min-width: 0; gap: 2px; }
+.auto-pick strong { font-size: 15px; }
+.auto-pick small { color: var(--label-2); font-size: 13px; line-height: 1.45; }
+.auto-pick-rank { display: grid; flex: 0 0 auto; width: 24px; height: 24px; place-items: center; border-radius: 50%; background: var(--tint); color: #fff; font-size: 12px; font-weight: 700; }
+.auto-picks-time { padding: 2px 0 10px; color: var(--label-3); font-size: 12px; }
 .targeting-add { display: grid; grid-template-columns: minmax(0, 1fr) 90px auto; gap: 8px; }
 .targeting-form > .approve-button { justify-self: start; margin-top: 4px; }
-@media (max-width: 480px) { .targeting-add { grid-template-columns: minmax(0, 1fr) 80px; } .targeting-add .reject-button { grid-column: 1 / -1; } .targeting-form > .approve-button { justify-self: stretch; } }
+.targeting-form > .filter-group { justify-self: start; min-width: 260px; }
+.targeting-form > .filter-group .filter-button { flex: 1 1 0; }
+@media (max-width: 480px) { .targeting-form > .filter-group { justify-self: stretch; } .targeting-add { grid-template-columns: minmax(0, 1fr) 80px; } .targeting-add .reject-button { grid-column: 1 / -1; } .targeting-form > .approve-button { justify-self: stretch; } }
 
 /* --------------------------------------------------------------------------
    Brain (learning agent)

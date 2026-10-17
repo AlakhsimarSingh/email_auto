@@ -4,6 +4,10 @@ import { useEffect, useMemo, useState } from 'react';
 import type { FormEvent } from 'react';
 
 type Targeting = {
+  mode: 'auto' | 'manual';
+  cityCount: number;
+  autoPicks: Array<{ city: string; country: string; score: number; reason: string }>;
+  autoPickedAt: string | null;
   presets: Array<{ id: string; label: string; group: string }>;
   selected: string[];
   legacy: string[];
@@ -14,6 +18,8 @@ type Targeting = {
 export default function TargetingPanel() {
   const [state, setState] = useState<Targeting | null>(null);
   const [selected, setSelected] = useState<string[]>([]);
+  const [mode, setMode] = useState<'auto' | 'manual'>('auto');
+  const [cityCount, setCityCount] = useState(5);
   const [cities, setCities] = useState<Array<{ city: string; country: string }>>([]);
   const [newCity, setNewCity] = useState('');
   const [newCountry, setNewCountry] = useState('');
@@ -24,6 +30,8 @@ export default function TargetingPanel() {
   const apply = (data: Targeting) => {
     setState(data);
     setSelected(data.selected);
+    setMode(data.mode);
+    setCityCount(data.cityCount);
     setCities(data.cities);
     setNewCountry((current) => current || data.cities[0]?.country || data.markets[0]?.code || '');
   };
@@ -66,12 +74,12 @@ export default function TargetingPanel() {
       const response = await fetch('/api/proxy/settings/targeting', {
         method: 'PUT',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ niches: selected, cities }),
+        body: JSON.stringify({ mode, cityCount, niches: selected, cities }),
       });
       const result = await response.json().catch(() => null) as (Targeting & { message?: string }) | null;
       if (!response.ok || !result?.presets) throw new Error(result?.message ?? 'Could not save targeting.');
       apply(result);
-      setNotice(`Saved: ${result.selected.length} business types in ${result.cities.length} ${result.cities.length === 1 ? 'city' : 'cities'}. Run the "Import businesses" workflow in GitHub Actions to fetch them now, or wait for Monday's weekly import.`);
+      setNotice(`Saved: ${result.selected.length} business types in ${result.cities.length} ${result.cities.length === 1 ? 'city' : 'cities'}${result.mode === 'auto' ? ', chosen automatically' : ''}. Run the "Import businesses" workflow in GitHub Actions to fetch them now, or wait for Monday's weekly import.`);
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : 'Could not save targeting.');
     } finally {
@@ -109,7 +117,33 @@ export default function TargetingPanel() {
             </div>
           ))}
 
-          <div className="targeting-heading"><strong>Cities</strong><small>{cities.length}/10</small></div>
+          <div className="targeting-heading"><strong>Cities</strong>{mode === 'manual' && <small>{cities.length}/10</small>}</div>
+          <div className="filter-group" role="tablist" aria-label="How cities are chosen">
+            <button type="button" role="tab" aria-selected={mode === 'auto'} className={`filter-button${mode === 'auto' ? ' selected' : ''}`} onClick={() => setMode('auto')}>Automatic</button>
+            <button type="button" role="tab" aria-selected={mode === 'manual'} className={`filter-button${mode === 'manual' ? ' selected' : ''}`} onClick={() => setMode('manual')}>Manual</button>
+          </div>
+          {mode === 'auto' ? (
+            <>
+              <p className="portfolio-form-note">The agent picks the best-scoring market and its best cities using the market scorecard, city size and how often researched leads in each city became drafts. It re-checks daily and before every weekly import.</p>
+              <label className="targeting-count">Number of cities
+                <select value={cityCount} onChange={(event) => setCityCount(Number(event.target.value))}>
+                  {Array.from({ length: 10 }, (_, index) => index + 1).map((count) => <option key={count} value={count}>{count}</option>)}
+                </select>
+              </label>
+              {state.mode === 'auto' && state.autoPicks.length > 0 && (
+                <div className="auto-picks">
+                  {state.autoPicks.map((pick, index) => (
+                    <div className="auto-pick" key={`${pick.country}:${pick.city}`}>
+                      <span className="auto-pick-rank">{index + 1}</span>
+                      <div><strong>{pick.city}, {pick.country}</strong><small>{pick.reason}</small></div>
+                    </div>
+                  ))}
+                  {state.autoPickedAt && <small className="auto-picks-time">Chosen {new Date(state.autoPickedAt).toLocaleString()}</small>}
+                </div>
+              )}
+            </>
+          ) : (
+            <>
           {!cities.length && <p className="admin-empty">No cities yet.</p>}
           <div className="chip-row">
             {cities.map((item) => (
@@ -126,8 +160,10 @@ export default function TargetingPanel() {
             </select>
             <button type="button" className="reject-button" disabled={!newCity.trim() || cities.length >= 10} onClick={addCity}>Add</button>
           </div>
+            </>
+          )}
           {!!state.legacy.length && <p className="portfolio-form-note">Saving replaces the old campaign ({state.legacy.join(', ')}) with your selection.</p>}
-          <button className="approve-button" type="submit" disabled={busy || !selected.length || !cities.length}>{busy ? 'Saving…' : 'Save targeting'}</button>
+          <button className="approve-button" type="submit" disabled={busy || !selected.length || (mode === 'manual' && !cities.length)}>{busy ? 'Saving…' : 'Save targeting'}</button>
         </form>
       )}
     </section>

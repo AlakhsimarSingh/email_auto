@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "build": "prisma generate && tsc",
-    "test": "tsx --test src/companies-house.test.ts src/reply-classification.test.ts src/portfolio.test.ts src/push.test.ts src/warmup.test.ts src/notifications.test.ts src/scheduling.test.ts src/brain-math.test.ts src/analytics-extra.test.ts src/usage-meter.test.ts src/activity.test.ts src/sources.test.ts src/contact-search.test.ts",
+    "test": "tsx --test src/companies-house.test.ts src/reply-classification.test.ts src/portfolio.test.ts src/push.test.ts src/warmup.test.ts src/notifications.test.ts src/scheduling.test.ts src/brain-math.test.ts src/analytics-extra.test.ts src/usage-meter.test.ts src/activity.test.ts src/sources.test.ts src/contact-search.test.ts src/targeting.test.ts",
     "start": "node dist/server.js",
     "db:migrate": "prisma migrate deploy && tsx src/migrate.ts",
     "preflight": "tsx src/preflight.ts"

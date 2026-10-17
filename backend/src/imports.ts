@@ -4,6 +4,7 @@ import { prisma } from './db.js';
 import { activity } from './activity.js';
 import { addContactIfAllowed, isDirectoryUrl, isSocialUrl, normalizeWebsite } from './jobs.js';
 import { humanizeCategory, nichePreset, presetForCategory } from './niches.js';
+import { refreshAutoTargeting } from './targeting.js';
 
 // Businesses pushed by the weekly open-data importer (tools/importer, run in GitHub Actions).
 
@@ -59,6 +60,8 @@ function domainOf(url: string) {
 
 /** Active campaign targets the importer should query. */
 export async function importTargets() {
+  // Automatic targeting re-picks cities from the latest results before each weekly import.
+  await refreshAutoTargeting().catch((error) => console.error(JSON.stringify({ level: 'error', event: 'auto_targeting_failed', message: error instanceof Error ? error.message : String(error) })));
   const [campaigns, markets] = await Promise.all([
     prisma.campaign.findMany({ where: { active: true }, select: { niche: true, city: true, country: true } }),
     prisma.market.findMany({ where: { enabled: true }, select: { code: true } }),

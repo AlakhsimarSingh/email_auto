@@ -20,6 +20,7 @@ import { recordPageSpeedCall } from './usage-meter.js';
 import { activity, runStage, tickFinished, tickStarted } from './activity.js';
 import { nicheNoun } from './niches.js';
 import { contactSearchConfigured, searchContact } from './contact-search.js';
+import { refreshAutoTargeting } from './targeting.js';
 import { chooseAngle, chooseCandidates, chooseSubjectStyle, getDraftingMemory, runBrainCycle } from './brain.js';
 import { containsBannedPhrase, STYLE_HINTS, type SubjectStyle } from './brain-math.js';
 
@@ -418,6 +419,8 @@ const DISCOVERY_FAILURE_BACKOFF_MS = 2 * 60 * 60_000;
 const DISCOVERY_STATE_KEY = 'discovery_last_attempt';
 
 async function discover() {
+  // Daily: automatic targeting re-ranks cities by what the agent has learned.
+  await refreshAutoTargeting();
   const n = await prisma.business.count({ where: { status: { in: ['new', 'review', 'call_queue'] } } });
   if (n >= DISCOVERY_REFILL_BELOW) {
     activity('discover', `${n} businesses are already waiting, so no new search this cycle (searches when fewer than ${DISCOVERY_REFILL_BELOW} remain)`);

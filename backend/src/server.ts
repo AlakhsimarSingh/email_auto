@@ -25,6 +25,7 @@ import { getEffectiveDailyCap, getWarmupState } from './warmup.js';
 import { activitySnapshot, loadActivity } from './activity.js';
 import { importBusinesses, importTargets, parseImportBatch } from './imports.js';
 import { NICHE_PRESETS, nichePreset } from './niches.js';
+import { getTargetingSettings, lastAutoPicks, refreshAutoTargeting, saveTargetingSettings, syncCampaigns } from './targeting.js';
 import { registerBrainRoutes } from './brain-routes.js';
 import { registerAnalyticsExtraRoutes } from './analytics-extra.js';
 import { autoApproveSignal, recordDraftEdit } from './brain.js';
@@ -38,8 +39,11 @@ app.addContentTypeParser('application/x-www-form-urlencoded', { parseAs: 'string
 await registerAuthRoutes(app);
 const t0 = Date.now();
 
-/** Settings → Targeting: available business types, the active selection, and cities. */
+/** Settings → Targeting: mode, business types, cities (with reasons in automatic mode). */
 async function targetingState() {
+  const settings = await getTargetingSettings();
+  // Automatic mode is the default, so make sure it has picked cities before showing them.
+  const auto = settings.mode === 'auto' ? await refreshAutoTargeting() : await lastAutoPicks();
   const [campaigns, markets] = await Promise.all([
     prisma.campaign.findMany({ where: { active: true }, select: { niche: true, city: true, country: true } }),
     prisma.market.findMany({ where: { enabled: true }, select: { code: true, name: true }, orderBy: { name: 'asc' } }),
@@ -49,10 +53,14 @@ async function targetingState() {
     if (campaign.city && campaign.country) cities.set(`${campaign.country}:${campaign.city.toLowerCase()}`, { city: campaign.city, country: campaign.country });
   }
   return {
+    mode: settings.mode,
+    cityCount: settings.cityCount,
     presets: NICHE_PRESETS.map(({ id, label, group }) => ({ id, label, group })),
-    selected: [...new Set(campaigns.flatMap((campaign) => nichePreset(campaign.niche) ? [campaign.niche!] : []))],
+    selected: settings.niches,
     legacy: campaigns.filter((campaign) => !nichePreset(campaign.niche)).map((campaign) => `${campaign.niche} – ${campaign.city}`),
     cities: [...cities.values()],
+    autoPicks: settings.mode === 'auto' ? auto?.picks ?? [] : [],
+    autoPickedAt: settings.mode === 'auto' ? auto?.at ?? null : null,
     markets,
   };
 }
@@ -811,7 +819,9 @@ app.register(async (r) => {
     }));
   r.get('/settings/targeting', { preHandler: requireOwner }, async () => targetingState());
   r.put('/settings/targeting', { preHandler: requireOwner }, async (request, reply) => {
-    const body = request.body as { niches?: unknown; cities?: unknown } | null;
+    const body = request.body as { mode?: unknown; cityCount?: unknown; niches?: unknown; cities?: unknown } | null;
+    const mode = body?.mode === 'manual' ? 'manual' : 'auto';
+    const cityCount = Number(body?.cityCount ?? 5);
     const enabled = new Set((await prisma.market.findMany({ where: { enabled: true }, select: { code: true } })).map((market) => market.code));
     const niches = Array.isArray(body?.niches) ? [...new Set(body.niches.filter((id): id is string => typeof id === 'string' && !!nichePreset(id)))] : [];
     const cities = Array.isArray(body?.cities) ? body.cities.flatMap((raw) => {
@@ -820,21 +830,16 @@ app.register(async (r) => {
       const country = typeof item?.country === 'string' ? item.country.trim().toUpperCase() : '';
       return city && city.length <= 80 && /^[\p{L} .'-]+$/u.test(city) && enabled.has(country) ? [{ city, country }] : [];
     }) : [];
-    if (!niches.length || !cities.length || cities.length > 10) {
-      return reply.code(400).send({ error: 'invalid_targeting', message: 'Choose at least one business type and 1–10 cities in enabled markets.' });
+    if (!niches.length || !Number.isSafeInteger(cityCount) || cityCount < 1 || cityCount > 10 ||
+        (mode === 'manual' && (!cities.length || cities.length > 10))) {
+      return reply.code(400).send({ error: 'invalid_targeting', message: mode === 'manual'
+        ? 'Choose at least one business type and 1–10 cities in enabled markets.'
+        : 'Choose at least one business type and 1–10 cities for automatic targeting.' });
     }
-    const keep: number[] = [];
-    for (const { city, country } of cities) {
-      for (const id of niches) {
-        const preset = nichePreset(id)!;
-        const existing = await prisma.campaign.findFirst({ where: { niche: id, city: { equals: city, mode: 'insensitive' }, country }, select: { id: true } });
-        const data = { name: `${preset.label} – ${city}`, niche: id, city, country, osmFilter: preset.osm, active: true };
-        keep.push(existing ? (await prisma.campaign.update({ where: { id: existing.id }, data, select: { id: true } })).id
-          : (await prisma.campaign.create({ data, select: { id: true } })).id);
-      }
-    }
-    await prisma.campaign.updateMany({ where: { id: { notIn: keep } }, data: { active: false } });
-    await prisma.auditLog.create({ data: { actorEmail: request.auth!.email, action: 'settings.targeting_updated', meta: { niches, cities } } });
+    await saveTargetingSettings({ mode, cityCount, niches });
+    if (mode === 'auto') await refreshAutoTargeting({ force: true });
+    else await syncCampaigns(niches, cities);
+    await prisma.auditLog.create({ data: { actorEmail: request.auth!.email, action: 'settings.targeting_updated', meta: { mode, cityCount, niches, cities: mode === 'manual' ? cities : [] } } });
     return targetingState();
   });
   r.get('/settings/portfolio', { preHandler: requireOwner }, getPortfolioSettings);
