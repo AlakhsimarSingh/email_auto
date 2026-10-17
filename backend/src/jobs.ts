@@ -50,6 +50,8 @@ const LABEL: Record<string, string> = {
   mobile_performance: 'mobile PageSpeed performance score is low',
   accessibility: 'mobile PageSpeed accessibility score is low',
   seo: 'mobile PageSpeed SEO score is low',
+  site_unreachable: 'the website address listed for this business did not load when checked',
+  ssl_error: 'browsers show a security warning before opening the website',
 };
 
 /**
@@ -69,6 +71,8 @@ export const PITCH: Record<string, { problem: string; fix: string }> = {
   accessibility: { problem: 'parts of your website are hard to read or use for some visitors', fix: 'make it easier for everyone to read and use' },
   no_website_listing: { problem: "I couldn't find a website linked from your public listing, so people searching online may not find much about you", fix: 'put together a simple, professional website so customers can find you, see what you offer and get in touch' },
   social_only: { problem: 'your listing only links to a social-media page, which not every customer uses', fix: 'give you a simple website of your own that works for everyone' },
+  site_unreachable: { problem: "the website address listed for your business didn't load when I tried it, so anyone clicking through from Google or a directory hits a dead end", fix: 'get a fast, reliable website back up so customers who look you up can actually reach you' },
+  ssl_error: { problem: 'browsers show a security warning before opening your website, which puts many visitors off', fix: 'fix the security certificate so your site opens cleanly and visitors trust it' },
 };
 
 const possessive = (name: string) => /s$/i.test(name.trim()) ? `${name.trim()}'` : `${name.trim()}'s`;
@@ -847,6 +851,37 @@ function isPublicIp(address: string) {
   return isIP(address) === 6 && /^[23][0-9a-f]{3}:/i.test(normalized) && !normalized.startsWith('2001:db8:');
 }
 
+/**
+ * Detects a website that is gone (domain no longer resolves, server refuses or times out) or opens with a
+ * browser security warning. Returns null when the site answers at all, even with an error page.
+ */
+async function siteUnreachable(url: string): Promise<{ key: 'site_unreachable' | 'ssl_error'; evidence: string } | null> {
+  const host = new URL(url).hostname;
+  try {
+    await assertPublicUrl(url);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code ?? '';
+    if (['ENOTFOUND', 'EAI_AGAIN', 'ENODATA'].includes(code) || /ENOTFOUND|EAI_AGAIN/.test(errorMessage(error))) {
+      return { key: 'site_unreachable', evidence: `The website address ${host} did not load: the domain name no longer resolves` };
+    }
+    throw error;
+  }
+  try {
+    await fetch(url, { method: 'GET', redirect: 'manual', headers: { 'user-agent': `EmailAutomator/1.0 (website audit; ${env.OWNER_EMAIL})` }, signal: AbortSignal.timeout(12000) });
+    return null;
+  } catch (error) {
+    const cause = error instanceof Error && error.cause && typeof error.cause === 'object' ? error.cause as NodeJS.ErrnoException : null;
+    const code = cause?.code ?? '';
+    if (/CERT|SSL|TLS|ALTNAME|SELF_SIGNED/i.test(`${code} ${cause?.message ?? ''}`)) {
+      return { key: 'ssl_error', evidence: `Opening ${host} triggers a browser security warning (${code || 'invalid certificate'})` };
+    }
+    if (['ECONNREFUSED', 'ECONNRESET', 'EHOSTUNREACH', 'UND_ERR_CONNECT_TIMEOUT'].includes(code) || (error instanceof Error && error.name === 'TimeoutError')) {
+      return { key: 'site_unreachable', evidence: `The website at ${host} did not respond when checked` };
+    }
+    throw error;
+  }
+}
+
 async function assertPublicUrl(value: string) {
   const url = new URL(value);
   if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) {
@@ -862,7 +897,7 @@ async function assertPublicUrl(value: string) {
   }
 }
 
-async function fetchPublicPage(value: string, allow404 = false) {
+async function fetchPublicPage(value: string, allow404 = false, anyStatus = false) {
   let url = value;
   for (let redirects = 0; redirects <= 5; redirects++) {
     await assertPublicUrl(url);
@@ -880,7 +915,7 @@ async function fetchPublicPage(value: string, allow404 = false) {
       url = new URL(location, url).toString();
       continue;
     }
-    if (!response.ok && !(response.status === 404 && allow404)) throw new Error(`Website returned HTTP ${response.status}`);
+    if (!anyStatus && !response.ok && !(response.status === 404 && allow404)) throw new Error(`Website returned HTTP ${response.status}`);
     return { response, url };
   }
   throw new Error('Website exceeded the five-redirect limit');
@@ -950,12 +985,13 @@ async function limitedText(response: Response, maximumBytes: number, options: { 
 
 async function robotsAllows(siteUrl: string, path: string) {
   const origin = new URL(siteUrl).origin;
-  const { response, url } = await fetchPublicPage(`${origin}/robots.txt`, true).catch((error) => {
+  // RFC 9309: redirects are followed (e.g. example.com -> www.example.com), any 4xx means "no restrictions",
+  // and a server error means "assume everything is disallowed".
+  const { response } = await fetchPublicPage(`${origin}/robots.txt`, true, true).catch((error) => {
     throw new Error(`Could not check robots.txt: ${errorMessage(error)}`);
   });
-  if (new URL(url).origin !== origin) throw new Error('robots.txt redirected to another host');
-  if (response.status === 404) return true;
-  if (!response.ok) throw new Error(`robots.txt returned HTTP ${response.status}`);
+  if (response.status >= 400 && response.status < 500) return true;
+  if (!response.ok) return false;
   const rules = await limitedText(response, 128_000);
   let active = false;
   let matchedLength = -1;
@@ -1291,170 +1327,181 @@ async function auditAndDraft() {
           continue;
         }
         const startUrl = normalizeWebsite(b.websiteUrl);
-        activity('audit', `Checking robots.txt on ${new URL(startUrl).hostname}`);
-        if (!await robotsAllows(startUrl, new URL(startUrl).pathname)) {
-          activity('audit', `${new URL(startUrl).hostname} asks crawlers not to visit; skipped ${label}`, 'warn');
-          await prisma.business.update({
-            where: { id: b.id },
-            data: { status: 'skipped', findings: ['robots_disallow'], auditedAt: new Date() },
-          });
-          console.info(JSON.stringify({ level: 'info', event: 'website_audit_robots_disallow', businessId: b.id, url: startUrl }));
-          continue;
-        }
-        activity('audit', `Loading the homepage of ${new URL(startUrl).hostname}`);
-        const home = await fetchPublicPage(startUrl);
-        if (
-          new URL(home.url).origin !== new URL(startUrl).origin ||
-          new URL(home.url).pathname !== new URL(startUrl).pathname
-        ) {
-          if (!await robotsAllows(home.url, new URL(home.url).pathname)) {
+        const unreachable = await siteUnreachable(startUrl);
+        if (unreachable) {
+          // A dead or warning-throwing website is itself the strongest honest pitch.
+          findings.push(unreachable.key);
+          signals.push({ key: unreachable.key, evidence: unreachable.evidence, sourceUrl: startUrl });
+          score += 20;
+          activity('audit', `${label}: ${unreachable.evidence}`, 'warn');
+          // The site cannot be crawled, so look for a published email on the open web instead.
+          if (!contact?.email) contact = await rescueEmail({ ...b, websiteUrl: null }, label);
+        } else {
+          activity('audit', `Checking robots.txt on ${new URL(startUrl).hostname}`);
+          if (!await robotsAllows(startUrl, new URL(startUrl).pathname)) {
+            activity('audit', `${new URL(startUrl).hostname} asks crawlers not to visit; skipped ${label}`, 'warn');
             await prisma.business.update({
               where: { id: b.id },
               data: { status: 'skipped', findings: ['robots_disallow'], auditedAt: new Date() },
             });
+            console.info(JSON.stringify({ level: 'info', event: 'website_audit_robots_disallow', businessId: b.id, url: startUrl }));
             continue;
           }
-        }
-        const contentType = home.response.headers.get('content-type') ?? '';
-        if (!contentType.toLowerCase().includes('text/html')) {
-          await prisma.business.update({
-            where: { id: b.id },
-            data: { status: 'skipped', findings: ['not_html'], auditedAt: new Date() },
+          activity('audit', `Loading the homepage of ${new URL(startUrl).hostname}`);
+          const home = await fetchPublicPage(startUrl);
+          if (
+            new URL(home.url).origin !== new URL(startUrl).origin ||
+            new URL(home.url).pathname !== new URL(startUrl).pathname
+          ) {
+            if (!await robotsAllows(home.url, new URL(home.url).pathname)) {
+              await prisma.business.update({
+                where: { id: b.id },
+                data: { status: 'skipped', findings: ['robots_disallow'], auditedAt: new Date() },
+              });
+              continue;
+            }
+          }
+          const contentType = home.response.headers.get('content-type') ?? '';
+          if (!contentType.toLowerCase().includes('text/html')) {
+            await prisma.business.update({
+              where: { id: b.id },
+              data: { status: 'skipped', findings: ['not_html'], auditedAt: new Date() },
+            });
+            continue;
+          }
+          const htmlPages = [{ url: home.url, $: load(await limitedText(home.response, 1_000_000, { truncate: true })) }];
+          const homePage = htmlPages[0]!;
+          const hostname = new URL(home.url).hostname;
+          const linkedPages = homePage.$('a[href]').toArray()
+            .map((element) => homePage.$(element).attr('href'))
+            .filter((href): href is string => Boolean(href))
+            .filter((href) => /contact|about|team|reach|location|book/i.test(href));
+          // Common paths are probed too, because many sites hide contact links in scripts or menus.
+          const contactLinks = [...new Set([...linkedPages, '/contact', '/contact-us', '/about'].map((href) => {
+            try { return new URL(href, home.url).pathname; } catch { return ''; }
+          }))].filter((path) => path && path !== new URL(home.url).pathname).slice(0, 4);
+          if (contactLinks.length) activity('audit', `Reading ${contactLinks.length} contact/about ${contactLinks.length === 1 ? 'page' : 'pages'} on ${hostname}`);
+          for (const href of contactLinks) {
+            try {
+              const url = new URL(href, home.url);
+              if (url.hostname !== hostname || !['http:', 'https:'].includes(url.protocol)) continue;
+              if (!await robotsAllows(home.url, url.pathname)) continue;
+              const page = await fetchPublicPage(url.toString());
+              if (new URL(page.url).hostname.toLowerCase() !== hostname.toLowerCase()) continue;
+              if (new URL(page.url).pathname !== url.pathname && !await robotsAllows(home.url, new URL(page.url).pathname)) continue;
+              if (!(page.response.headers.get('content-type') ?? '').toLowerCase().includes('text/html')) continue;
+              htmlPages.push({ url: page.url, $: load(await limitedText(page.response, 500_000, { truncate: true })) });
+            } catch (error) {
+              console.info(JSON.stringify({ level: 'info', event: 'contact_page_skipped', businessId: b.id, url: href, message: errorMessage(error) }));
+            }
+          }
+          const $ = homePage.$;
+          const secure = new URL(home.url).protocol === 'https:';
+          if (!secure) {
+            findings.push('no_https');
+            signals.push({ key: 'no_https', evidence: `Homepage resolved to ${home.url}`, sourceUrl: home.url });
+            score += 10;
+          }
+          if (!$('meta[name="viewport"]').length) {
+            findings.push('not_mobile_friendly');
+            signals.push({ key: 'viewport', evidence: 'The homepage HTML does not include a viewport meta tag', sourceUrl: home.url });
+            score += 10;
+          }
+          if (!$('meta[name="description"]').length) {
+            findings.push('missing_meta');
+            signals.push({ key: 'meta_description', evidence: 'The homepage HTML does not include a meta description', sourceUrl: home.url });
+            score += 5;
+          }
+          const copyrightYears = [...$.root().text().matchAll(/(?:©|copyright)\s*(?:\d{4}\s*[-–]\s*)?(\d{4})/gi)]
+            .map((match) => Number(match[1]))
+            .filter(Number.isFinite);
+          const currentYear = new Date().getFullYear();
+          if (copyrightYears.some((year) => year < currentYear - 3)) {
+            findings.push('old_copyright');
+            signals.push({ key: 'copyright_year', evidence: `Observed copyright year(s): ${copyrightYears.join(', ')}`, sourceUrl: home.url });
+            score += 5;
+          }
+          const hasBooking = htmlPages.some(({ $: page }) =>
+            page('a[href],button').toArray().some((element) =>
+              /book|reserv|order|schedule/i.test(`${page(element).text() ?? ''} ${page(element).attr('href') ?? ''}`),
+            ),
+          );
+          if (!hasBooking) {
+            findings.push('no_booking_link');
+            signals.push({ key: 'booking_link', evidence: 'No homepage or contact-page link or button labeled with booking, reservations, ordering, or scheduling terms was found', sourceUrl: home.url });
+            score += 5;
+          }
+          const hasContactForm = htmlPages.some(({ $: page }) =>
+            page('form').toArray().some((element) => /contact|enquir|message/i.test(
+              `${page(element).attr('action') ?? ''} ${page(element).text() ?? ''}`,
+            )),
+          );
+          signals.push({
+            key: 'contact_form',
+            evidence: hasContactForm ? 'A contact-oriented form is present on the homepage or a contact page' : 'No contact-oriented form was detected on the homepage or contact pages',
+            sourceUrl: home.url,
           });
-          continue;
-        }
-        const htmlPages = [{ url: home.url, $: load(await limitedText(home.response, 1_000_000, { truncate: true })) }];
-        const homePage = htmlPages[0]!;
-        const hostname = new URL(home.url).hostname;
-        const linkedPages = homePage.$('a[href]').toArray()
-          .map((element) => homePage.$(element).attr('href'))
-          .filter((href): href is string => Boolean(href))
-          .filter((href) => /contact|about|team|reach|location|book/i.test(href));
-        // Common paths are probed too, because many sites hide contact links in scripts or menus.
-        const contactLinks = [...new Set([...linkedPages, '/contact', '/contact-us', '/about'].map((href) => {
-          try { return new URL(href, home.url).pathname; } catch { return ''; }
-        }))].filter((path) => path && path !== new URL(home.url).pathname).slice(0, 4);
-        if (contactLinks.length) activity('audit', `Reading ${contactLinks.length} contact/about ${contactLinks.length === 1 ? 'page' : 'pages'} on ${hostname}`);
-        for (const href of contactLinks) {
-          try {
-            const url = new URL(href, home.url);
-            if (url.hostname !== hostname || !['http:', 'https:'].includes(url.protocol)) continue;
-            if (!await robotsAllows(home.url, url.pathname)) continue;
-            const page = await fetchPublicPage(url.toString());
-            if (new URL(page.url).hostname.toLowerCase() !== hostname.toLowerCase()) continue;
-            if (new URL(page.url).pathname !== url.pathname && !await robotsAllows(home.url, new URL(page.url).pathname)) continue;
-            if (!(page.response.headers.get('content-type') ?? '').toLowerCase().includes('text/html')) continue;
-            htmlPages.push({ url: page.url, $: load(await limitedText(page.response, 500_000, { truncate: true })) });
-          } catch (error) {
-            console.info(JSON.stringify({ level: 'info', event: 'contact_page_skipped', businessId: b.id, url: href, message: errorMessage(error) }));
-          }
-        }
-        const $ = homePage.$;
-        const secure = new URL(home.url).protocol === 'https:';
-        if (!secure) {
-          findings.push('no_https');
-          signals.push({ key: 'no_https', evidence: `Homepage resolved to ${home.url}`, sourceUrl: home.url });
-          score += 10;
-        }
-        if (!$('meta[name="viewport"]').length) {
-          findings.push('not_mobile_friendly');
-          signals.push({ key: 'viewport', evidence: 'The homepage HTML does not include a viewport meta tag', sourceUrl: home.url });
-          score += 10;
-        }
-        if (!$('meta[name="description"]').length) {
-          findings.push('missing_meta');
-          signals.push({ key: 'meta_description', evidence: 'The homepage HTML does not include a meta description', sourceUrl: home.url });
-          score += 5;
-        }
-        const copyrightYears = [...$.root().text().matchAll(/(?:©|copyright)\s*(?:\d{4}\s*[-–]\s*)?(\d{4})/gi)]
-          .map((match) => Number(match[1]))
-          .filter(Number.isFinite);
-        const currentYear = new Date().getFullYear();
-        if (copyrightYears.some((year) => year < currentYear - 3)) {
-          findings.push('old_copyright');
-          signals.push({ key: 'copyright_year', evidence: `Observed copyright year(s): ${copyrightYears.join(', ')}`, sourceUrl: home.url });
-          score += 5;
-        }
-        const hasBooking = htmlPages.some(({ $: page }) =>
-          page('a[href],button').toArray().some((element) =>
-            /book|reserv|order|schedule/i.test(`${page(element).text() ?? ''} ${page(element).attr('href') ?? ''}`),
-          ),
-        );
-        if (!hasBooking) {
-          findings.push('no_booking_link');
-          signals.push({ key: 'booking_link', evidence: 'No homepage or contact-page link or button labeled with booking, reservations, ordering, or scheduling terms was found', sourceUrl: home.url });
-          score += 5;
-        }
-        const hasContactForm = htmlPages.some(({ $: page }) =>
-          page('form').toArray().some((element) => /contact|enquir|message/i.test(
-            `${page(element).attr('action') ?? ''} ${page(element).text() ?? ''}`,
-          )),
-        );
-        signals.push({
-          key: 'contact_form',
-          evidence: hasContactForm ? 'A contact-oriented form is present on the homepage or a contact page' : 'No contact-oriented form was detected on the homepage or contact pages',
-          sourceUrl: home.url,
-        });
-        const generator = $('meta[name="generator"]').attr('content') ?? '';
-        const platform = /wordpress|wix|squarespace|shopify|webflow|weebly/i.exec(generator)?.[0]
-          ?? /wp-content|wixstatic|squarespace|cdn\.shopify|webflow\.com/i.exec($.html())?.[0];
-        if (platform) signals.push({ key: 'platform', evidence: `Homepage HTML indicates ${platform}`, sourceUrl: home.url });
-        activity('audit', `Site checks on ${hostname}: ${findings.length ? findings.map((item) => item.replaceAll('_', ' ')).join(', ') : 'no basic issues found'}`);
-        const foundEmails = new Map<string, string>();
-        for (const page of htmlPages) {
-          const mailto = page.$('a[href^="mailto:"]').toArray()
-            .map((element) => page.$(element).attr('href')?.slice(7).split(/[?;]/, 1)[0] ?? '');
-          const textEmails = page.$.root().text().match(EMAIL) ?? [];
-          for (const email of [...mailto, ...textEmails, ...hiddenEmails(page.$)]) {
-            const normalized = normalizeContactEmail(email);
-            if (normalized) foundEmails.set(normalized, page.url);
-          }
-        }
-        const candidates = [...foundEmails.entries()].sort(([a], [b]) =>
-          Number(!/^(info|contact|hello|office|enquir|sales|booking|support)[+._-]?@/i.test(a))
-          - Number(!/^(info|contact|hello|office|enquir|sales|booking|support)[+._-]?@/i.test(b)),
-        );
-        for (const [email, url] of candidates) {
-          if (isPersonalEmail(email, b.country) || isDisposableEmail(email) || !await hasMailExchange(email)) continue;
-          const [suppressed, duplicate] = await Promise.all([
-            prisma.suppression.findUnique({ where: { email }, select: { email: true } }),
-            prisma.contact.findFirst({ where: { email }, select: { id: true } }),
-          ]);
-          if (!suppressed && !duplicate) {
-            const created = await prisma.contact.create({ data: { businessId: b.id, email, sourceUrl: url }, select: { id: true, email: true } });
-            activity('audit', `Found a verified business email for ${label} (${email})`, 'success');
-            contact = created;
-            break;
-          }
-        }
-        if (!contact?.email) contact = await rescueEmail({ ...b, websiteUrl: home.url }, label);
-        // PageSpeed runs for every lead we can actually email: slow mobile pages are the most common real problem,
-        // and the basic HTML checks alone missed them on otherwise modern sites.
-        if (env.PAGESPEED_API_KEY && contact?.email) {
-          try {
-            activity('audit', `Running a Google PageSpeed mobile audit on ${hostname} (this takes 10-30 seconds)`);
-            const pageSpeed = await pageSpeedScores(home.url);
-            activity('audit', `PageSpeed for ${hostname}: ${pageSpeed.scores.map((item) => `${item.label} ${item.value}`).join(', ')}${pageSpeed.lcpDisplay ? `, load ${pageSpeed.lcpDisplay}` : ''}`);
-            screenshot = pageSpeed.thumbnail;
-            for (const item of pageSpeed.scores) {
-              signals.push({ key: item.key, evidence: `Mobile PageSpeed ${item.label}: ${item.value}/100`, sourceUrl: home.url });
-              if (item.value < item.threshold) {
-                findings.push(item.key);
-                score += item.key === 'mobile_performance' ? 15 : 5;
-              } else {
-                score -= 2;
-              }
+          const generator = $('meta[name="generator"]').attr('content') ?? '';
+          const platform = /wordpress|wix|squarespace|shopify|webflow|weebly/i.exec(generator)?.[0]
+            ?? /wp-content|wixstatic|squarespace|cdn\.shopify|webflow\.com/i.exec($.html())?.[0];
+          if (platform) signals.push({ key: 'platform', evidence: `Homepage HTML indicates ${platform}`, sourceUrl: home.url });
+          activity('audit', `Site checks on ${hostname}: ${findings.length ? findings.map((item) => item.replaceAll('_', ' ')).join(', ') : 'no basic issues found'}`);
+          const foundEmails = new Map<string, string>();
+          for (const page of htmlPages) {
+            const mailto = page.$('a[href^="mailto:"]').toArray()
+              .map((element) => page.$(element).attr('href')?.slice(7).split(/[?;]/, 1)[0] ?? '');
+            const textEmails = page.$.root().text().match(EMAIL) ?? [];
+            for (const email of [...mailto, ...textEmails, ...hiddenEmails(page.$)]) {
+              const normalized = normalizeContactEmail(email);
+              if (normalized) foundEmails.set(normalized, page.url);
             }
-            if (pageSpeed.lcpMs !== null) {
-              signals.push({ key: 'largest_contentful_paint', evidence: `Mobile Largest Contentful Paint: ${pageSpeed.lcpDisplay ?? `${pageSpeed.lcpMs} ms`}`, sourceUrl: home.url });
-              if (pageSpeed.lcpMs > 2500) {
-                findings.push('slow_lcp');
-                score += 5;
-              }
+          }
+          const candidates = [...foundEmails.entries()].sort(([a], [b]) =>
+            Number(!/^(info|contact|hello|office|enquir|sales|booking|support)[+._-]?@/i.test(a))
+            - Number(!/^(info|contact|hello|office|enquir|sales|booking|support)[+._-]?@/i.test(b)),
+          );
+          for (const [email, url] of candidates) {
+            if (isPersonalEmail(email, b.country) || isDisposableEmail(email) || !await hasMailExchange(email)) continue;
+            const [suppressed, duplicate] = await Promise.all([
+              prisma.suppression.findUnique({ where: { email }, select: { email: true } }),
+              prisma.contact.findFirst({ where: { email }, select: { id: true } }),
+            ]);
+            if (!suppressed && !duplicate) {
+              const created = await prisma.contact.create({ data: { businessId: b.id, email, sourceUrl: url }, select: { id: true, email: true } });
+              activity('audit', `Found a verified business email for ${label} (${email})`, 'success');
+              contact = created;
+              break;
             }
-          } catch (error) {
-            console.error(JSON.stringify({ level: 'error', event: 'pagespeed_failed', businessId: b.id, message: errorMessage(error) }));
-            activity('audit', `PageSpeed audit failed for ${label}: ${errorMessage(error)}`, 'warn');
+          }
+          if (!contact?.email) contact = await rescueEmail({ ...b, websiteUrl: home.url }, label);
+          // PageSpeed runs for every lead we can actually email: slow mobile pages are the most common real problem,
+          // and the basic HTML checks alone missed them on otherwise modern sites.
+          if (env.PAGESPEED_API_KEY && contact?.email) {
+            try {
+              activity('audit', `Running a Google PageSpeed mobile audit on ${hostname} (this takes 10-30 seconds)`);
+              const pageSpeed = await pageSpeedScores(home.url);
+              activity('audit', `PageSpeed for ${hostname}: ${pageSpeed.scores.map((item) => `${item.label} ${item.value}`).join(', ')}${pageSpeed.lcpDisplay ? `, load ${pageSpeed.lcpDisplay}` : ''}`);
+              screenshot = pageSpeed.thumbnail;
+              for (const item of pageSpeed.scores) {
+                signals.push({ key: item.key, evidence: `Mobile PageSpeed ${item.label}: ${item.value}/100`, sourceUrl: home.url });
+                if (item.value < item.threshold) {
+                  findings.push(item.key);
+                  score += item.key === 'mobile_performance' ? 15 : 5;
+                } else {
+                  score -= 2;
+                }
+              }
+              if (pageSpeed.lcpMs !== null) {
+                signals.push({ key: 'largest_contentful_paint', evidence: `Mobile Largest Contentful Paint: ${pageSpeed.lcpDisplay ?? `${pageSpeed.lcpMs} ms`}`, sourceUrl: home.url });
+                if (pageSpeed.lcpMs > 2500) {
+                  findings.push('slow_lcp');
+                  score += 5;
+                }
+              }
+            } catch (error) {
+              console.error(JSON.stringify({ level: 'error', event: 'pagespeed_failed', businessId: b.id, message: errorMessage(error) }));
+              activity('audit', `PageSpeed audit failed for ${label}: ${errorMessage(error)}`, 'warn');
+            }
           }
         }
       }
@@ -1683,6 +1730,8 @@ async function draft(
       }
       let actualTokens: number | null = null;
       let validCandidate: { subject: string; body: string; confidence: number } | null = null;
+      // Billing, quota and key errors will not fix themselves on a retry.
+      let stopRetrying = false;
       try {
         const baseUrl = (env.LLM_BASE_URL || 'https://api.openai.com/v1').replace(/\/+$/, '');
         const response = await fetch(`${baseUrl}/chat/completions`, {
@@ -1738,12 +1787,14 @@ async function draft(
       } catch (error) {
         const message = errorMessage(error);
         if (!issues.length || !issues.join('; ').includes(message)) issues = [message];
+        if (/HTTP (401|402|403)|no credits|insufficient_quota|quota|billing/i.test(message)) stopRetrying = true;
         console.error(JSON.stringify({ level: 'error', event: 'llm_draft_attempt_failed', attempt: attempt + 1, message }));
       }
       await prisma.dailyTokenUsage.update({
         where: { day: utcDay },
         data: { totalTokens: { increment: (actualTokens ?? 0) - estimate } },
       });
+      if (stopRetrying) break;
       if (validCandidate) {
         selected = { subject: validCandidate.subject, body: validCandidate.body };
         confidence = validCandidate.confidence;
