@@ -19,6 +19,7 @@ import { lookupCompaniesHouse } from './companies-house.js';
 import { recordPageSpeedCall } from './usage-meter.js';
 import { activity, runStage, tickFinished, tickStarted } from './activity.js';
 import { nicheNoun } from './niches.js';
+import { contactSearchConfigured, searchContact } from './contact-search.js';
 import { chooseAngle, chooseCandidates, chooseSubjectStyle, getDraftingMemory, runBrainCycle } from './brain.js';
 import { containsBannedPhrase, STYLE_HINTS, type SubjectStyle } from './brain-math.js';
 
@@ -1053,6 +1054,31 @@ function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
 }
 
+/** Last resort before a lead is skipped or sent to the call queue: search the web for a published email. */
+async function rescueEmail(
+  b: { id: number; name: string | null; city: string | null; phone: string | null; websiteUrl: string | null; country: string | null },
+  label: string,
+) {
+  const configured = contactSearchConfigured();
+  if (!b.name || (!configured.tavily && !configured.hunter)) return null;
+  const found = await searchContact({ name: b.name, city: b.city, phone: b.phone, website: b.websiteUrl }, (message) => activity('audit', message));
+  for (const item of found) {
+    if (isPersonalEmail(item.email, b.country) || isDisposableEmail(item.email) || !await hasMailExchange(item.email)) continue;
+    const [suppressed, duplicate] = await Promise.all([
+      prisma.suppression.findUnique({ where: { email: item.email }, select: { email: true } }),
+      prisma.contact.findFirst({ where: { email: item.email }, select: { id: true } }),
+    ]);
+    if (suppressed || duplicate) continue;
+    const created = await prisma.contact.create({ data: { businessId: b.id, email: item.email, sourceUrl: item.sourceUrl }, select: { id: true, email: true } });
+    activity('audit', `Found a published email for ${label} via ${item.provider === 'tavily' ? 'Tavily' : 'Hunter.io'} (${item.email})`, 'success');
+    return created;
+  }
+  activity('audit', found.length
+    ? `Web search found ${found.length} ${found.length === 1 ? 'address' : 'addresses'} for ${label}, but none passed verification`
+    : `Web search found no published email for ${label}`);
+  return null;
+}
+
 const RESEARCH_MAX_PER_CYCLE = 6;
 const RESEARCH_TIME_BUDGET_MS = 3 * 60_000;
 
@@ -1170,6 +1196,7 @@ async function auditAndDraft() {
           signals.push({ key: 'operating_evidence', evidence: 'Opening hours are listed in OpenStreetMap', sourceUrl: osmSourceUrl });
           score += 5;
         }
+        if (!contact?.email) contact = await rescueEmail(b, label);
         if (!contact?.email || !await hasMailExchange(contact.email)) {
           await prisma.business.update({
             where: { id: b.id },
@@ -1330,6 +1357,7 @@ async function auditAndDraft() {
             break;
           }
         }
+        if (!contact?.email) contact = await rescueEmail({ ...b, websiteUrl: home.url }, label);
         // PageSpeed runs for every lead we can actually email: slow mobile pages are the most common real problem,
         // and the basic HTML checks alone missed them on otherwise modern sites.
         if (env.PAGESPEED_API_KEY && contact?.email) {

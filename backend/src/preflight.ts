@@ -36,6 +36,9 @@ function checkEnvironment() {
   record(env.APP_ORIGIN?.startsWith('https://') ? 'PASS' : live ? 'FAIL' : 'WARN', 'APP_ORIGIN', 'HTTPS origin required for unsubscribe links and WebAuthn');
   record(env.LLM_API_KEY?.trim() ? 'PASS' : 'WARN', 'LLM_API_KEY', env.LLM_API_KEY?.trim() ? 'LLM drafting enabled' : 'not set: every draft will be a template needing manual writing');
   record(env.PAGESPEED_API_KEY?.trim() ? 'PASS' : 'WARN', 'PAGESPEED_API_KEY', 'optional: enables performance/SEO/accessibility findings');
+  record(env.TAVILY_API_KEY?.trim() || env.HUNTER_API_KEY?.trim() ? 'PASS' : 'WARN', 'Contact search', env.TAVILY_API_KEY?.trim() || env.HUNTER_API_KEY?.trim()
+    ? `enabled: ${[env.TAVILY_API_KEY?.trim() && 'Tavily', env.HUNTER_API_KEY?.trim() && 'Hunter.io'].filter(Boolean).join(' + ')}`
+    : 'optional: set TAVILY_API_KEY and/or HUNTER_API_KEY to search the web for published emails');
   const cap = Number(env.DAILY_CAP ?? 10);
   record(Number.isSafeInteger(cap) && cap >= 1 && cap <= 1000 ? 'PASS' : 'FAIL', 'DAILY_CAP', `${env.DAILY_CAP ?? 10}`);
 }

@@ -10,6 +10,7 @@ type Usage = {
   queue: { pending: number; sent_today: number; by_status: Record<string, number> };
   last_tick_at: string | null;
   pagespeed?: { calls_today: number; month_calls: number; daily_quota: number };
+  contact_search?: Record<'tavily' | 'hunter', { configured: boolean; month_calls: number; monthly_limit: number }>;
   render_instance_hours: number | null;
   render_instance_hours_note: string;
 };
@@ -137,6 +138,10 @@ export default function UsagePage() {
                   <div className="funnel-row"><span>Queue by status</span><strong>{Object.entries(usage.queue.by_status).map(([key, value]) => `${key}: ${value}`).join(' · ') || 'No records'}</strong></div>
                   <div className="funnel-row"><span>Database occupancy</span><strong>{dbPercent.toFixed(1)}%</strong></div>
                   <div className="funnel-row"><span>PageSpeed calls today / this month</span><strong>{usage.pagespeed ? `${formatTokens(usage.pagespeed.calls_today)} of ${formatTokens(usage.pagespeed.daily_quota)} · ${formatTokens(usage.pagespeed.month_calls)}` : 'Unavailable'}</strong></div>
+                  {usage.contact_search && (['tavily', 'hunter'] as const).map((provider) => {
+                    const item = usage.contact_search![provider];
+                    return <div className="funnel-row" key={provider}><span>{provider === 'tavily' ? 'Tavily' : 'Hunter.io'} email searches this month</span><strong>{item.configured ? `${formatTokens(item.month_calls)} of ${formatTokens(item.monthly_limit)}` : 'Not configured'}</strong></div>;
+                  })}
                   <div className="funnel-row"><span>Backend awake hours (self-measured)</span><strong>{usage.render_instance_hours === null ? 'Unavailable' : `${usage.render_instance_hours} of 750`}</strong></div>
                 </div>
                 <p className="analytics-footnote">{usage.render_instance_hours_note} Database limit is a configured warning threshold, not a live Supabase plan entitlement check.</p>

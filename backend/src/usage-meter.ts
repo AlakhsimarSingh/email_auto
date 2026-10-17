@@ -4,7 +4,7 @@ import { prisma } from './db.js';
 const PREFIX = 'usage_meter:';
 const FLUSH_MS = 5 * 60_000;
 
-type Counter = 'pagespeed_calls' | 'awake_seconds';
+type Counter = 'pagespeed_calls' | 'awake_seconds' | 'tavily_calls' | 'hunter_calls';
 
 function dayKey(date = new Date()) {
   return `${PREFIX}${date.toISOString().slice(0, 10)}`;
@@ -29,7 +29,7 @@ export function recordPageSpeedCall() {
   });
 }
 
-export type UsageDay = { day: string; pagespeedCalls: number; awakeSeconds: number };
+export type UsageDay = { day: string; pagespeedCalls: number; awakeSeconds: number; tavilyCalls: number; hunterCalls: number };
 
 export function parseUsageRow(key: string, value: unknown): UsageDay | null {
   if (!key.startsWith(PREFIX) || !value || typeof value !== 'object' || Array.isArray(value)) return null;
@@ -38,7 +38,13 @@ export function parseUsageRow(key: string, value: unknown): UsageDay | null {
     const parsed = Number(raw ?? 0);
     return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
   };
-  return { day: key.slice(PREFIX.length), pagespeedCalls: num(record.pagespeed_calls), awakeSeconds: num(record.awake_seconds) };
+  return {
+    day: key.slice(PREFIX.length),
+    pagespeedCalls: num(record.pagespeed_calls),
+    awakeSeconds: num(record.awake_seconds),
+    tavilyCalls: num(record.tavily_calls),
+    hunterCalls: num(record.hunter_calls),
+  };
 }
 
 /** Days of the current UTC month, newest first. */

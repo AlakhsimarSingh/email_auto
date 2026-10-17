@@ -502,6 +502,10 @@ app.register(async (r) => {
       queue: { pending: pending, sent_today: sentToday, by_status: Object.fromEntries(emailCounts.map((row) => [row.status ?? 'unknown', row._count._all])) },
       last_tick_at: typeof lastTick?.value === 'string' ? lastTick.value : null,
       pagespeed: { calls_today: meter.find((row) => row.day === today)?.pagespeedCalls ?? 0, month_calls: meter.reduce((sum, row) => sum + row.pagespeedCalls, 0), daily_quota: 25_000 },
+      contact_search: {
+        tavily: { configured: !!env.TAVILY_API_KEY?.trim(), month_calls: meter.reduce((sum, row) => sum + row.tavilyCalls, 0), monthly_limit: Number(env.TAVILY_MONTHLY_LIMIT ?? 950) },
+        hunter: { configured: !!env.HUNTER_API_KEY?.trim(), month_calls: meter.reduce((sum, row) => sum + row.hunterCalls, 0), monthly_limit: Number(env.HUNTER_MONTHLY_LIMIT ?? 45) },
+      },
       render_instance_hours: Math.round(awakeSeconds / 36) / 100,
       render_instance_hours_note: 'Self-measured backend awake hours this UTC month (flushed every 5 minutes; excludes cold starts). Render bills per instance, so confirm against the Render dashboard; the free plan allows 750 hours/month.',
     };
