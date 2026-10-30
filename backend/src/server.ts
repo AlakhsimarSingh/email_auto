@@ -5,6 +5,7 @@ import { lookup, resolveMx } from 'node:dns/promises';
 import { disconnectDb, prisma } from './db.js';
 import { regenerateDraft, runTick } from './jobs.js';
 import { cleanGuidanceText } from './brain-math.js';
+import { OPPORTUNITY, insightFromSignals } from './business-insight.js';
 import { authenticate, registerAuthRoutes, requireOwner, requireStepUp } from './auth.js';
 import { nextRecipientWindow, SEND_PLAN_MIN_NOTICE_MS } from './scheduling.js';
 import { createAnnouncedSendPlan } from './send-plans.js';
@@ -1293,7 +1294,15 @@ app.register(async (r) => {
       screenshot_data: email.business?.screenshot ? Buffer.from(email.business.screenshot).toString('base64') : null,
       signature_preview: signaturePreview(email.body ?? ''),
       niche: email.business?.niche ?? null,
-      draft_template: (email.selectionInfo as { template?: unknown } | null)?.template === 'pitch_v2' ? 'pitch_v2' : null,
+      insight: (() => {
+        const insight = insightFromSignals(email.business?.scoreSignals, email.business?.niche ?? null, null);
+        return insight ? {
+          summary: insight.summary,
+          services: insight.services,
+          opportunities: insight.opportunities.map((item) => ({ seen: OPPORTUNITY[item.key]?.seen ?? item.key, evidence: item.evidence, sourceUrl: item.sourceUrl })),
+        } : null;
+      })(),
+      draft_template: ['pitch_v2', 'pitch_v3'].includes(String((email.selectionInfo as { template?: unknown } | null)?.template)) ? 'pitch_v2' : null,
       draft_issues: (() => {
         const issues = (email.selectionInfo as { draftIssues?: unknown } | null)?.draftIssues;
         return Array.isArray(issues) ? issues.filter((issue): issue is string => typeof issue === 'string') : [];
@@ -1340,7 +1349,7 @@ app.register(async (r) => {
     }
     // The new ready-made pitch (template pitch_v2) is complete and fact-checked, so it may be approved as-is;
     // older template drafts must be edited or rewritten first.
-    if (email.manualRequired && message === (email.origBody ?? '').trim() && (email.selectionInfo as { template?: unknown } | null)?.template !== 'pitch_v2') {
+    if (email.manualRequired && message === (email.origBody ?? '').trim() && !['pitch_v2', 'pitch_v3'].includes(String((email.selectionInfo as { template?: unknown } | null)?.template))) {
       return reply.code(400).send({ error: 'manual_draft_must_be_rewritten' });
     }
     const holdMinutes = Number(env.SEND_HOLD_MINUTES ?? 30);

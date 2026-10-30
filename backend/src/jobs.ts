@@ -21,6 +21,7 @@ import { activity, runStage, tickFinished, tickStarted } from './activity.js';
 import { nicheNoun } from './niches.js';
 import { contactSearchConfigured, isPlaceholderEmail, searchContact } from './contact-search.js';
 import { refreshAutoTargeting } from './targeting.js';
+import { OPPORTUNITY, PLAYBOOK, emptyInsight, extractBusinessInsight, insightFromSignals, insightSignals, type BusinessInsight } from './business-insight.js';
 import { chooseAngle, chooseCandidates, chooseSubjectStyle, getDraftingMemory, runBrainCycle } from './brain.js';
 import { containsBannedPhrase, STYLE_HINTS, type SubjectStyle } from './brain-math.js';
 
@@ -77,25 +78,44 @@ export const PITCH: Record<string, { problem: string; fix: string }> = {
 
 const possessive = (name: string) => /s$/i.test(name.trim()) ? `${name.trim()}'` : `${name.trim()}'s`;
 
-/** The safe, already-persuasive draft used when AI drafting is unavailable or fails its checks. */
-export function templateDraft(name: string, track: string, findings: string[], sender: string) {
-  const pitches = findings.flatMap((id) => PITCH[id] ? [PITCH[id]!] : []).slice(0, 2);
-  const problems = pitches.map((pitch) => pitch.problem).join(', and ');
-  const fixes = pitches.map((pitch) => pitch.fix).join(', and ');
-  if (track === 'no_site') {
-    return {
-      subject: `Helping ${name} get found online`,
-      body: `Hi ${name} team,\n\n${problems ? `${problems.charAt(0).toUpperCase()}${problems.slice(1)}.` : ''}\n\nI'm a freelance web developer and I help local businesses like yours get online properly. I can ${fixes || 'set you up with a simple website'}. A couple of recent projects are linked below so you can see my work.\n\nWould it help if I sent a short video showing what this could look like for ${name}? It's free, with no obligation.\n\n${sender}`,
-    };
-  }
-  const capitalize = (text: string) => `${text.charAt(0).toUpperCase()}${text.slice(1)}`;
-  // Two problems read better as short points than as one long sentence.
-  const spotted = pitches.length > 1
-    ? `a couple of things that could be costing you customers:\n\n${pitches.map((pitch) => `- ${capitalize(pitch.problem)}.`).join('\n')}`
-    : `something that could be costing you customers: ${problems}.`;
+/** Short form of each website issue, for the one-sentence mention at the end of the pitch. */
+const ISSUE_SHORT: Record<string, string> = {
+  slow_lcp: 'it loads slowly on phones',
+  mobile_performance: 'it feels slow on phones',
+  no_booking_link: "there's no obvious way to book or buy from the homepage",
+  phone_no_booking: "customers can't book or order online",
+  no_https: 'browsers flag it as "Not secure"',
+  not_mobile_friendly: "it doesn't fit phone screens properly",
+  missing_meta: 'your Google listing has no summary under the name',
+  old_copyright: 'the footer still shows an old year',
+  seo: 'Google has trouble reading it',
+  accessibility: 'some parts are hard to read',
+  site_unreachable: "your website address doesn't load at the moment",
+  ssl_error: 'browsers show a security warning before opening it',
+};
+
+/**
+ * The ready-made pitch used when AI drafting is unavailable or fails its checks.
+ * It leads with automation that saves the owner time, tied to what we saw; website issues come last, briefly.
+ */
+export function templateDraft(name: string, track: string, findings: string[], sender: string, city: string | null = null, insight: BusinessInsight | null = null) {
+  const opportunities = (insight?.opportunities ?? []).flatMap((item) => OPPORTUNITY[item.key] ? [OPPORTUNITY[item.key]!] : []);
+  const playbook = insight?.playbook?.length ? insight.playbook : PLAYBOOK.default!;
+  const issues = findings.flatMap((id) => ISSUE_SHORT[id] ? [ISSUE_SHORT[id]!] : []).slice(0, 2);
+  const where = city && !name.toLowerCase().includes(city.toLowerCase()) ? ` in ${city}` : '';
+  const [first, second] = opportunities;
+  const intro = track === 'no_site'
+    ? `I came across ${name}${where}. I couldn't find a website linked from your public listing, so customers who look you up online may not find much.`
+    : `I came across ${name}${where} and had a look at your website.${first ? ` I noticed ${first.seen}, so I'd guess a fair bit of time goes into ${first.manual}.` : ''}`;
+  const pitch = first
+    ? `That's exactly the kind of work I automate. I can build ${first.feature}${second ? `, plus ${second.feature}` : ''}. For you that means ${first.benefit}.`
+    : `I build ${track === 'no_site' ? 'simple websites that do real work' : 'simple automations'} for businesses like yours, for example ${playbook[0]} and ${playbook[1] ?? playbook[0]}. They take repetitive admin off your plate, so customers get answers faster and you get more time for the actual work.`;
+  const aside = track !== 'no_site' && issues.length
+    ? `\n\nWhile I was on your site I also spotted that ${issues.join(' and ')}; I'd fix that as part of the same work.`
+    : '';
   return {
-    subject: `A quick win for ${possessive(name)} website`,
-    body: `Hi ${name} team,\n\nI took a look at ${possessive(name)} website and spotted ${spotted}\n\nThis is exactly the kind of thing I fix as a freelance web developer. I can ${fixes}. A couple of recent projects are linked below so you can see my work.\n\nWould it help if I sent a short video showing exactly what I'd change? It's free, with no obligation.\n\n${sender}`,
+    subject: first ? `Saving ${name} some time` : `An idea for ${name}`,
+    body: `Hi ${name} team,\n\n${intro}\n\n${pitch}${aside}\n\nA couple of recent projects are linked below so you can see my work. Would it help if I sent a short, free video showing how this would work for ${name}?\n\n${sender}`,
   };
 }
 
@@ -109,12 +129,12 @@ export function draftProblems(value: { subject: string; body: string }, business
   const letters = subject.replace(/[^A-Za-z]/g, '');
   const capitalWords = subject.split(/\s+/).filter((word) => word.length > 2 && word === word.toUpperCase() && /[A-Z]/.test(word)).length;
   if ((letters.length >= 6 && letters === letters.toUpperCase()) || capitalWords >= 2) problems.push('The subject line uses ALL CAPS, which looks like spam');
-  if (words < 70 || words > 160) problems.push(`The message is ${words} words; it should be 70–160`);
+  if (words < 70 || words > 190) problems.push(`The message is ${words} words; it should be 70–190`);
   if (businessName && !body.toLowerCase().includes(businessName.toLowerCase())) problems.push("The message doesn't mention the business by name");
   if (/[<>]/.test(body)) problems.push('The message contains HTML');
   const hype = /\b(guaranteed?|100%|act now|limited time|risk[- ]free|urgent|cheap|best price)\b/i.exec(`${subject} ${body}`);
   if (hype) problems.push(`It uses pushy wording ("${hype[0]}")`);
-  const jargon = /\b(lcp|largest contentful paint|pagespeed|meta description|viewport|https?\b(?!:)|seo score|lighthouse)\b/i.exec(body.replace(/https?:\/\/\S+/gi, ''));
+  const jargon = /\b(lcp|largest contentful paint|pagespeed|meta description|viewport|https?\b(?!:)|seo score|lighthouse|api|crm|webhook|saas)\b/i.exec(body.replace(/https?:\/\/\S+/gi, ''));
   if (jargon) problems.push(`It uses technical jargon ("${jargon[0]}") instead of plain language`);
   const allowedNumbers = new Set(businessName.match(/\b\d+(?:[.,]\d+)?%?\b/g) ?? []);
   const number = (body.replace(/https?:\/\/\S+/gi, '').match(/\b\d+(?:[.,]\d+)?%?\b/g) ?? []).find((claim) => !allowedNumbers.has(claim));
@@ -1243,6 +1263,8 @@ async function auditAndDraft() {
       const signals: Array<{ key: string; evidence: string; sourceUrl?: string }> = [];
       let screenshot: Buffer | null = null;
       let score = 40;
+      // What the business does and where it still works by hand; drives the pitch.
+      let insight: BusinessInsight = emptyInsight(b.niche, b.osmTags);
       if (b.country === 'GB' && b.name && env.COMPANIES_HOUSE_API_KEY?.trim()) {
         try {
           activity('audit', `Checking Companies House for ${label}`);
@@ -1449,6 +1471,11 @@ async function auditAndDraft() {
             ?? /wp-content|wixstatic|squarespace|cdn\.shopify|webflow\.com/i.exec($.html())?.[0];
           if (platform) signals.push({ key: 'platform', evidence: `Homepage HTML indicates ${platform}`, sourceUrl: home.url });
           activity('audit', `Site checks on ${hostname}: ${findings.length ? findings.map((item) => item.replaceAll('_', ' ')).join(', ') : 'no basic issues found'}`);
+          insight = extractBusinessInsight(htmlPages, b.niche, b.osmTags);
+          signals.push(...insightSignals(insight));
+          activity('audit', insight.opportunities.length
+            ? `Automation opportunities at ${label}: ${insight.opportunities.map((item) => item.key.replace('opp_', '').replaceAll('_', ' ')).join(', ')}`
+            : `No clear manual-work signs on ${hostname}; the pitch will use ideas for this type of business`);
           const foundEmails = new Map<string, string>();
           for (const page of htmlPages) {
             const mailto = page.$('a[href^="mailto:"]').toArray()
@@ -1531,8 +1558,8 @@ async function auditAndDraft() {
         });
         continue;
       }
-      if (!findings.length) {
-        activity('audit', `The website of ${label} looks healthy; nothing honest to pitch, so skipped`);
+      if (!findings.length && !insight.opportunities.length) {
+        activity('audit', `The website of ${label} looks healthy and shows no manual work to automate; skipped`);
         await prisma.business.update({
           where: { id: b.id },
           data: { status: 'skipped', score: Math.max(0, Math.min(100, score)), scoreSignals: signals, auditedAt: new Date() },
@@ -1551,12 +1578,12 @@ async function auditAndDraft() {
         select: { draftAngle: true },
       });
       const usedAngles = previousEmails.flatMap((email) => email.draftAngle ? [email.draftAngle] : []);
-      const angle = await chooseAngle(findings, usedAngles);
+      const angle = await chooseAngle([...findings, ...insight.opportunities.map((item) => item.key)], usedAngles);
       const subjectStyle = await chooseSubjectStyle();
       const memory = await getDraftingMemory({ niche: b.niche, country: b.country, track: b.track });
       activity('draft', `Writing a draft for ${label} (angle: ${angle.replaceAll('_', ' ')}, ${subjectStyle} subject)`);
       const d = await draft(
-        b,
+        { ...b, insight },
         b.track === 'site' ? b.websiteUrl ?? '' : '',
         findings,
         recent,
@@ -1639,7 +1666,7 @@ function isNearDuplicate(text: string, previous: Array<{ subject: string | null;
 }
 
 async function draft(
-  b: { name: string | null; city: string | null; track: string; niche?: string | null },
+  b: { name: string | null; city: string | null; track: string; niche?: string | null; insight?: BusinessInsight | null },
   _url: string,
   findings: string[],
   recent: Array<{ subject: string | null; body: string | null }>,
@@ -1654,7 +1681,9 @@ async function draft(
   const name = b.name ?? 'your business';
   const portfolio = portfolioMatch(b.name ?? '', b.track, facts);
   const allowedUrls = portfolio ? [portfolio.url] : [];
-  let selected = templateDraft(name, b.track, findings, env.SENDER_NAME ?? '');
+  const insight = b.insight ?? null;
+  const allowedIds = [...findings, ...(insight?.opportunities.map((item) => item.key) ?? [])];
+  let selected = templateDraft(name, b.track, findings, env.SENDER_NAME ?? '', b.city, insight);
   let manualRequired = true;
   let confidence: number | null = null;
   let previousAttempt = '';
@@ -1682,21 +1711,22 @@ async function draft(
           {
             role: 'system',
             content: [
-              'You write short, warm, persuasive cold emails from a freelance web developer to a small local business.',
-              'The goal is to show how fixing what we found will help their business: more customers, more bookings, more trust. Focus on outcomes, not technology.',
+              'You write short, warm, persuasive cold emails from a freelance developer who builds websites and simple automations for small local businesses.',
+              'The main selling point is AUTOMATION and FEATURES that save the owner time and money, tied to how this specific business works. Website problems are secondary.',
               'Structure, in short paragraphs:',
-              '1) Greet the business by name.',
-              '2) Describe one or two problems in plain, everyday words and what they may cost the business, using ONLY the supplied findings and their "problem" text.',
-              '3) Pitch confidently: say clearly that you can fix this and describe the result, based on the supplied "fix" text.',
+              '1) Greet the business by name and show you understand what they do, using about_the_business, services and type_of_business. Be specific, never generic.',
+              '2) The main pitch: one or two automations. Prefer how_they_work_now items (things actually seen on their site): name the manual work, the feature you would build, and what it saves them. If there are none, pick the best fit from automation_ideas_for_this_type and present it as an idea for a business like theirs, without claiming they currently do anything.',
+              '3) In ONE short sentence, mention the website_issues as something you would fix along the way. Skip this if there are none.',
               '4) Say that a couple of recent projects are linked below (the links are added automatically).',
-              '5) End with an easy, low-pressure next step: offer to send a short, free video showing exactly what you would change.',
-              '90-150 words, plain text. No jargon: never say LCP, PageSpeed, meta description, viewport, HTTPS or SEO score.',
+              '5) End with an easy, low-pressure next step: offer to send a short, free video showing how it would work for them.',
+              '100-170 words, plain text. Only claim something about the business if it appears in the supplied evidence.',
+              'No jargon: never say LCP, PageSpeed, meta description, viewport, HTTPS, SEO score, API or CRM.',
               'Do not use any digits or invented statistics, prices, guarantees or deadlines. Never say a business has no website; say only that no website was linked from its public listing.',
               'No hype, pressure, flattery or fake familiarity. Do not write any URL except the optional portfolio proof URL.',
               'For recontacts, use the requested angle and do not repeat prior angles. Follow the requested subjectStyle; keep the subject under nine words.',
               'If an owner playbook is supplied, follow it where it does not conflict with these rules.',
               'If reviewer_instruction is supplied, rewrite current_draft to follow it closely, while still keeping every rule above.',
-              'Return JSON with exactly: subject (string), body (string), finding_ids_used (array of supplied finding ids), confidence (number 0..1).',
+              'Return JSON with exactly: subject (string), body (string), ids_used (array of the how_they_work_now and website_issues ids you mentioned), confidence (number 0..1).',
             ].join(' '),
           },
           {
@@ -1706,8 +1736,14 @@ async function draft(
               type_of_business: b.niche ?? undefined,
               city: b.city,
               track: noSite ? 'no-site' : 'site',
-              offer: noSite ? 'a simple professional website with online booking or enquiries' : 'fixing the website problems below so it wins more customers',
-              findings: findings.map((id) => ({ id, problem: PITCH[id]?.problem ?? LABEL[id], fix: PITCH[id]?.fix, verified_evidence: LABEL[id] })),
+              about_the_business: insight?.summary ?? undefined,
+              services: insight?.services.length ? insight.services : undefined,
+              how_they_work_now: insight?.opportunities.length
+                ? insight.opportunities.map((item) => ({ id: item.key, what_we_saw: OPPORTUNITY[item.key]?.seen, evidence: item.evidence, manual_work: OPPORTUNITY[item.key]?.manual, feature_we_build: OPPORTUNITY[item.key]?.feature, what_it_saves: OPPORTUNITY[item.key]?.benefit }))
+                : undefined,
+              automation_ideas_for_this_type: insight?.playbook ?? PLAYBOOK.default,
+              offer: noSite ? 'a simple website that works for the business: booking, enquiries and automatic follow-ups' : 'automations and features that save time and money, plus fixing the website issues',
+              website_issues: findings.map((id) => ({ id, problem: PITCH[id]?.problem ?? LABEL[id], fix: PITCH[id]?.fix, verified_evidence: LABEL[id] })),
               sender: env.SENDER_NAME,
               recontact: previousContactCount > 0,
               angle,
@@ -1777,12 +1813,12 @@ async function draft(
         try { generated = JSON.parse(content); } catch { throw new Error('The AI reply was not in the expected format'); }
         if (!generated || typeof generated !== 'object' || Array.isArray(generated)) throw new Error('The AI reply was not in the expected format');
         previousAttempt = content;
-        const candidate = generated as { subject?: unknown; body?: unknown; finding_ids_used?: unknown; confidence?: unknown };
+        const candidate = generated as { subject?: unknown; body?: unknown; ids_used?: unknown; finding_ids_used?: unknown; confidence?: unknown };
+        const idsUsed = candidate.ids_used ?? candidate.finding_ids_used ?? [];
         if (typeof candidate.subject !== 'string' || typeof candidate.body !== 'string') throw new Error('The AI reply was missing a subject or message');
         const problems = draftProblems({ subject: candidate.subject, body: candidate.body }, b.name ?? '', allowedUrls, brain.banned);
-        if (!Array.isArray(candidate.finding_ids_used) || !candidate.finding_ids_used.length ||
-            !candidate.finding_ids_used.every((id) => typeof id === 'string' && findings.includes(id))) {
-          problems.push('It referred to a problem the agent did not actually verify');
+        if (!Array.isArray(idsUsed) || !idsUsed.every((id) => typeof id === 'string' && allowedIds.includes(id))) {
+          problems.push('It referred to something the agent did not actually see on the site');
         }
         const candidateText = `${candidate.subject.trim()} ${candidate.body.trim()}`;
         if (isNearDuplicate(candidateText, recent)) problems.push('It is too similar to an email sent recently');
@@ -1826,7 +1862,7 @@ async function draft(
     }
     console.info(JSON.stringify({ level: 'info', event: 'draft_requires_manual_writing', issues }));
   }
-  return { ...selected, manualRequired, confidence, portfolioName: portfolio?.name ?? null, issues, template: manualRequired ? 'pitch_v2' : null };
+  return { ...selected, manualRequired, confidence, portfolioName: portfolio?.name ?? null, issues, template: manualRequired ? 'pitch_v3' : null };
 }
 
 /** Re-writes a waiting draft with the current pitch (used by the Rewrite button on the review queue). */
@@ -1860,15 +1896,30 @@ export async function regenerateDraft(emailId: number, request: RewriteRequest =
   if (!email?.business) return null;
   const b = email.business;
   const findings = Array.isArray(b.findings) ? (b.findings as unknown[]).filter((item): item is string => typeof item === 'string' && item in LABEL) : [];
-  if (!findings.length) return null;
   const info = (email.selectionInfo ?? {}) as Record<string, unknown>;
+  // Leads researched before the automation pitch have no stored insight: read their homepage once and keep it.
+  let insight = insightFromSignals(b.scoreSignals, b.niche, b.osmTags);
+  if (!insight && b.track === 'site' && b.websiteUrl) {
+    try {
+      const startUrl = normalizeWebsite(b.websiteUrl);
+      if (await robotsAllows(startUrl, new URL(startUrl).pathname)) {
+        const home = await fetchPublicPage(startUrl);
+        insight = extractBusinessInsight([{ url: home.url, $: load(await limitedText(home.response, 1_000_000, { truncate: true })) }], b.niche, b.osmTags);
+        const existing = Array.isArray(b.scoreSignals) ? b.scoreSignals as Prisma.InputJsonValue[] : [];
+        await prisma.business.update({ where: { id: b.id }, data: { scoreSignals: [...existing, ...insightSignals(insight)] as Prisma.InputJsonValue[] } });
+      }
+    } catch (error) {
+      activity('draft', `Could not re-read ${b.name ?? 'the business'}'s website for the rewrite: ${errorMessage(error)}`, 'warn');
+    }
+  }
+  insight ??= emptyInsight(b.niche, b.osmTags);
   const recent = await prisma.email.findMany({
     where: { id: { not: email.id }, status: { in: ['drafted', 'approved', 'sent'] }, body: { not: null } },
     orderBy: { createdAt: 'desc' },
     take: 50,
     select: { subject: true, body: true },
   });
-  const angle = email.draftAngle ?? await chooseAngle(findings, []);
+  const angle = email.draftAngle ?? await chooseAngle([...findings, ...insight.opportunities.map((item) => item.key)], []);
   const style = (typeof info.subjectStyle === 'string' ? info.subjectStyle : await chooseSubjectStyle()) as SubjectStyle;
   const memory = await getDraftingMemory({ niche: b.niche, country: b.country, track: b.track });
   activity('draft', `Rewriting the draft for ${b.name ?? 'a business'} with the current pitch`);
@@ -1883,7 +1934,7 @@ export async function regenerateDraft(emailId: number, request: RewriteRequest =
       : `${remembered === 'saved' ? 'Learned' : 'Reinforced'} a drafting instruction${request.remember === 'niche' && b.niche ? ` for ${b.niche} businesses` : ' for all drafts'}: "${instruction}"`,
       remembered === 'full' ? 'warn' : 'success');
   }
-  const d = await draft(b, b.websiteUrl ?? '', findings, recent, email.sequenceStep, angle, [], {
+  const d = await draft({ ...b, insight }, b.websiteUrl ?? '', findings, recent, email.sequenceStep, angle, [], {
     instructions: memory.instructions.map((item) => item.text), banned: memory.banned, style,
   }, { instruction, current: request.current ?? { subject: email.subject ?? '', body: email.body ?? '' } });
   await prisma.email.update({

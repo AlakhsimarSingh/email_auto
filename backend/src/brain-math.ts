@@ -540,7 +540,8 @@ export const ANGLES = ['mobile usability', 'trust and accessibility', 'booking a
 export const ANGLE_FINDINGS: Record<string, string[]> = {
   'mobile usability': ['not_mobile_friendly', 'mobile_performance', 'slow_lcp'],
   'trust and accessibility': ['no_https', 'accessibility', 'old_copyright'],
-  'booking and conversion': ['no_booking_link', 'phone_no_booking', 'no_website_listing', 'social_only'],
+  'booking and conversion': ['no_booking_link', 'phone_no_booking', 'no_website_listing', 'social_only',
+    'opp_phone_booking', 'opp_quote_by_phone', 'opp_email_ordering', 'opp_pdf_menu', 'opp_pdf_forms', 'opp_no_contact_form', 'opp_no_online_store'],
   'search visibility': ['missing_meta', 'seo'],
 };
 

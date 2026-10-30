@@ -27,6 +27,7 @@ type Draft = {
   draft_issues?: string[];
   draft_template?: 'pitch_v2' | null;
   niche?: string | null;
+  insight?: { summary: string | null; services: string[]; opportunities: Array<{ seen: string; evidence: string; sourceUrl: string }> } | null;
 };
 
 type HeldEmail = {
@@ -290,6 +291,18 @@ export default function Review() {
                     <div className="finding-list">
                       {draft.findings.map((finding) => <span className="finding-tag" key={finding}>{finding.replaceAll('_', ' ')}</span>)}
                     </div>
+                  )}
+                  {draft.insight && (draft.insight.summary || draft.insight.opportunities.length > 0) && (
+                    <details className="evidence-details" open>
+                      <summary>What the agent understood about this business</summary>
+                      <ul>
+                        {draft.insight.summary && <li><strong>About</strong> — {draft.insight.summary}</li>}
+                        {draft.insight.services.length > 0 && <li><strong>Services</strong> — {draft.insight.services.join(', ')}</li>}
+                        {draft.insight.opportunities.map((item) => (
+                          <li key={item.seen}><strong>Automation opportunity</strong> — {item.seen}. {item.evidence}{item.sourceUrl && <> · <a href={item.sourceUrl} target="_blank" rel="noreferrer">source</a></>}</li>
+                        ))}
+                      </ul>
+                    </details>
                   )}
                   {!!draft.score_signals?.length && (
                     <details className="evidence-details">
