@@ -63,7 +63,7 @@ test('without manual-work signs the pitch uses ideas for that type of business, 
 test('draft checks explain exactly what is wrong in plain English', () => {
   const problems = draftProblems({ subject: 'Hi', body: 'Your LCP is 4.2 seconds and our CRM helps. Guaranteed results! https://evil.example' }, 'Maple Dental', [], ['results']);
   assert.ok(problems.some((problem) => /subject line/.test(problem)));
-  assert.ok(problems.some((problem) => /words; it should be 70–190/.test(problem)));
+  assert.ok(problems.some((problem) => /words; it should be 70–220/.test(problem)));
   assert.ok(problems.some((problem) => /doesn't mention the business/.test(problem)));
   assert.ok(problems.some((problem) => /jargon/.test(problem)));
   assert.ok(problems.some((problem) => /number the agent didn't measure \("4.2"\)/.test(problem)));
@@ -75,4 +75,17 @@ test('all-caps subject lines are flagged as spammy', () => {
   const body = 'Hi Neo Plus team, '.concat('word '.repeat(80));
   assert.ok(draftProblems({ subject: 'WEBSITE SUGGESTION - Improve bookings', body: `${body} Neo Plus` }, 'Neo Plus', [], []).some((problem) => /ALL CAPS/.test(problem)));
   assert.ok(!draftProblems({ subject: 'A quick win for Neo Plus', body: `${body} Neo Plus` }, 'Neo Plus', [], []).some((problem) => /ALL CAPS/.test(problem)));
+});
+
+test('the owner bio adds credibility, and only its own numbers are allowed', async () => {
+  const { parseSenderProfile } = await import('./sender-profile.js');
+  const bio = "I'm Alakhsimar, a full-stack developer. I rebuilt the booking platform for Maan Travels, taking its speed score from 19 to 99.";
+  const draft = templateDraft('Glow Hair Studio', 'site', ['no_https'], 'Alakhsimar Singh', 'Chicago', { summary: null, services: [], opportunities: [], playbook: PLAYBOOK.beauty! }, bio);
+  assert.ok(draft.body.includes(bio), 'bio appears in the pitch');
+  assert.deepEqual(draftProblems(draft, 'Glow Hair Studio', [], [], bio), [], 'numbers copied from the bio pass');
+  const invented = { subject: draft.subject, body: draft.body.replace('19 to 99', '19 to 100') };
+  assert.ok(draftProblems(invented, 'Glow Hair Studio', [], [], bio).some((problem) => /number the agent didn't measure \("100"\)/.test(problem)), 'a number not in the bio is still flagged');
+  assert.equal(parseSenderProfile({ bio: '' }).bio, null);
+  assert.throws(() => parseSenderProfile({ bio: 'Too short' }));
+  assert.throws(() => parseSenderProfile({ bio: 'See my work at https://example.com for details about me.' }));
 });

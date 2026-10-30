@@ -6,6 +6,7 @@ import { disconnectDb, prisma } from './db.js';
 import { regenerateDraft, runTick } from './jobs.js';
 import { cleanGuidanceText } from './brain-math.js';
 import { OPPORTUNITY, insightFromSignals } from './business-insight.js';
+import { getSenderProfile, parseSenderProfile, saveSenderProfile } from './sender-profile.js';
 import { authenticate, registerAuthRoutes, requireOwner, requireStepUp } from './auth.js';
 import { nextRecipientWindow, SEND_PLAN_MIN_NOTICE_MS } from './scheduling.js';
 import { createAnnouncedSendPlan } from './send-plans.js';
@@ -843,6 +844,18 @@ app.register(async (r) => {
     else await syncCampaigns(niches, cities);
     await prisma.auditLog.create({ data: { actorEmail: request.auth!.email, action: 'settings.targeting_updated', meta: { mode, cityCount, niches, cities: mode === 'manual' ? cities : [] } } });
     return targetingState();
+  });
+  r.get('/settings/profile', { preHandler: requireOwner }, async () => getSenderProfile());
+  r.put('/settings/profile', { preHandler: requireOwner }, async (request, reply) => {
+    let profile;
+    try {
+      profile = parseSenderProfile(request.body);
+    } catch (error) {
+      return reply.code(400).send({ error: 'invalid_profile', message: error instanceof Error ? error.message : 'Invalid profile' });
+    }
+    await saveSenderProfile(profile);
+    await prisma.auditLog.create({ data: { actorEmail: request.auth!.email, action: 'settings.profile_updated', meta: { hasBio: !!profile.bio } } });
+    return profile;
   });
   r.get('/settings/portfolio', { preHandler: requireOwner }, getPortfolioSettings);
   r.put('/settings/portfolio', { preHandler: [requireOwner, requireStepUp] }, async (request, reply) => {

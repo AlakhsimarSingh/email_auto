@@ -21,6 +21,7 @@ import { activity, runStage, tickFinished, tickStarted } from './activity.js';
 import { nicheNoun } from './niches.js';
 import { contactSearchConfigured, isPlaceholderEmail, searchContact } from './contact-search.js';
 import { refreshAutoTargeting } from './targeting.js';
+import { getSenderProfile } from './sender-profile.js';
 import { OPPORTUNITY, PLAYBOOK, emptyInsight, extractBusinessInsight, insightFromSignals, insightSignals, type BusinessInsight } from './business-insight.js';
 import { chooseAngle, chooseCandidates, chooseSubjectStyle, getDraftingMemory, runBrainCycle } from './brain.js';
 import { containsBannedPhrase, STYLE_HINTS, type SubjectStyle } from './brain-math.js';
@@ -98,7 +99,7 @@ const ISSUE_SHORT: Record<string, string> = {
  * The ready-made pitch used when AI drafting is unavailable or fails its checks.
  * It leads with automation that saves the owner time, tied to what we saw; website issues come last, briefly.
  */
-export function templateDraft(name: string, track: string, findings: string[], sender: string, city: string | null = null, insight: BusinessInsight | null = null) {
+export function templateDraft(name: string, track: string, findings: string[], sender: string, city: string | null = null, insight: BusinessInsight | null = null, bio: string | null = null) {
   const opportunities = (insight?.opportunities ?? []).flatMap((item) => OPPORTUNITY[item.key] ? [OPPORTUNITY[item.key]!] : []);
   const playbook = insight?.playbook?.length ? insight.playbook : PLAYBOOK.default!;
   const issues = findings.flatMap((id) => ISSUE_SHORT[id] ? [ISSUE_SHORT[id]!] : []).slice(0, 2);
@@ -115,12 +116,12 @@ export function templateDraft(name: string, track: string, findings: string[], s
     : '';
   return {
     subject: first ? `Saving ${name} some time` : `An idea for ${name}`,
-    body: `Hi ${name} team,\n\n${intro}\n\n${pitch}${aside}\n\nA couple of recent projects are linked below so you can see my work. Would it help if I sent a short, free video showing how this would work for ${name}?\n\n${sender}`,
+    body: `Hi ${name} team,\n\n${intro}\n\n${pitch}${bio ? `\n\n${bio}` : ''}${aside}\n\nA couple of recent projects are linked below so you can see my work. Would it help if I sent a short, free video showing how this would work for ${name}?\n\n${sender}`,
   };
 }
 
 /** Plain-English reasons a draft cannot go out as written. Empty means it passed. */
-export function draftProblems(value: { subject: string; body: string }, businessName: string, allowedUrls: string[], banned: string[]) {
+export function draftProblems(value: { subject: string; body: string }, businessName: string, allowedUrls: string[], banned: string[], trustedText = '') {
   const problems: string[] = [];
   const subject = value.subject.trim();
   const body = value.body.trim();
@@ -129,14 +130,14 @@ export function draftProblems(value: { subject: string; body: string }, business
   const letters = subject.replace(/[^A-Za-z]/g, '');
   const capitalWords = subject.split(/\s+/).filter((word) => word.length > 2 && word === word.toUpperCase() && /[A-Z]/.test(word)).length;
   if ((letters.length >= 6 && letters === letters.toUpperCase()) || capitalWords >= 2) problems.push('The subject line uses ALL CAPS, which looks like spam');
-  if (words < 70 || words > 190) problems.push(`The message is ${words} words; it should be 70–190`);
+  if (words < 70 || words > 220) problems.push(`The message is ${words} words; it should be 70–220`);
   if (businessName && !body.toLowerCase().includes(businessName.toLowerCase())) problems.push("The message doesn't mention the business by name");
   if (/[<>]/.test(body)) problems.push('The message contains HTML');
   const hype = /\b(guaranteed?|100%|act now|limited time|risk[- ]free|urgent|cheap|best price)\b/i.exec(`${subject} ${body}`);
   if (hype) problems.push(`It uses pushy wording ("${hype[0]}")`);
   const jargon = /\b(lcp|largest contentful paint|pagespeed|meta description|viewport|https?\b(?!:)|seo score|lighthouse|api|crm|webhook|saas)\b/i.exec(body.replace(/https?:\/\/\S+/gi, ''));
   if (jargon) problems.push(`It uses technical jargon ("${jargon[0]}") instead of plain language`);
-  const allowedNumbers = new Set(businessName.match(/\b\d+(?:[.,]\d+)?%?\b/g) ?? []);
+  const allowedNumbers = new Set(`${businessName} ${trustedText}`.match(/\b\d+(?:[.,]\d+)?%?\b/g) ?? []);
   const number = (body.replace(/https?:\/\/\S+/gi, '').match(/\b\d+(?:[.,]\d+)?%?\b/g) ?? []).find((claim) => !allowedNumbers.has(claim));
   if (number) problems.push(`It mentions a number the agent didn't measure ("${number}")`);
   const urls = (body.match(/https?:\/\/\S+/gi) ?? []).map((url) => url.replace(/[),.!?]+$/, ''));
@@ -1683,7 +1684,8 @@ async function draft(
   const allowedUrls = portfolio ? [portfolio.url] : [];
   const insight = b.insight ?? null;
   const allowedIds = [...findings, ...(insight?.opportunities.map((item) => item.key) ?? [])];
-  let selected = templateDraft(name, b.track, findings, env.SENDER_NAME ?? '', b.city, insight);
+  const senderBio = (await getSenderProfile()).bio;
+  let selected = templateDraft(name, b.track, findings, env.SENDER_NAME ?? '', b.city, insight, senderBio);
   let manualRequired = true;
   let confidence: number | null = null;
   let previousAttempt = '';
@@ -1716,10 +1718,11 @@ async function draft(
               'Structure, in short paragraphs:',
               '1) Greet the business by name and show you understand what they do, using about_the_business, services and type_of_business. Be specific, never generic.',
               '2) The main pitch: one or two automations. Prefer how_they_work_now items (things actually seen on their site): name the manual work, the feature you would build, and what it saves them. If there are none, pick the best fit from automation_ideas_for_this_type and present it as an idea for a business like theirs, without claiming they currently do anything.',
-              '3) In ONE short sentence, mention the website_issues as something you would fix along the way. Skip this if there are none.',
-              '4) Say that a couple of recent projects are linked below (the links are added automatically).',
-              '5) End with an easy, low-pressure next step: offer to send a short, free video showing how it would work for them.',
-              '100-170 words, plain text. Only claim something about the business if it appears in the supplied evidence.',
+              '3) If sender_bio is supplied, add one or two short sentences about who you are, taken ONLY from sender_bio, so they trust you can deliver. Never add credentials, clients or numbers that are not in sender_bio.',
+              '4) In ONE short sentence, mention the website_issues as something you would fix along the way. Skip this if there are none.',
+              '5) Say that a couple of recent projects are linked below (the links are added automatically).',
+              '6) End with an easy, low-pressure next step: offer to send a short, free video showing how it would work for them.',
+              '110-200 words, plain text. Digits are allowed only when copied from sender_bio. Only claim something about the business if it appears in the supplied evidence.',
               'No jargon: never say LCP, PageSpeed, meta description, viewport, HTTPS, SEO score, API or CRM.',
               'Do not use any digits or invented statistics, prices, guarantees or deadlines. Never say a business has no website; say only that no website was linked from its public listing.',
               'No hype, pressure, flattery or fake familiarity. Do not write any URL except the optional portfolio proof URL.',
@@ -1745,6 +1748,7 @@ async function draft(
               offer: noSite ? 'a simple website that works for the business: booking, enquiries and automatic follow-ups' : 'automations and features that save time and money, plus fixing the website issues',
               website_issues: findings.map((id) => ({ id, problem: PITCH[id]?.problem ?? LABEL[id], fix: PITCH[id]?.fix, verified_evidence: LABEL[id] })),
               sender: env.SENDER_NAME,
+              sender_bio: senderBio ?? undefined,
               recontact: previousContactCount > 0,
               angle,
               subjectStyle: brain.style,
@@ -1816,7 +1820,7 @@ async function draft(
         const candidate = generated as { subject?: unknown; body?: unknown; ids_used?: unknown; finding_ids_used?: unknown; confidence?: unknown };
         const idsUsed = candidate.ids_used ?? candidate.finding_ids_used ?? [];
         if (typeof candidate.subject !== 'string' || typeof candidate.body !== 'string') throw new Error('The AI reply was missing a subject or message');
-        const problems = draftProblems({ subject: candidate.subject, body: candidate.body }, b.name ?? '', allowedUrls, brain.banned);
+        const problems = draftProblems({ subject: candidate.subject, body: candidate.body }, b.name ?? '', allowedUrls, brain.banned, senderBio ?? '');
         if (!Array.isArray(idsUsed) || !idsUsed.every((id) => typeof id === 'string' && allowedIds.includes(id))) {
           problems.push('It referred to something the agent did not actually see on the site');
         }
